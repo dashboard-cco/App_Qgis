@@ -346,6 +346,90 @@ def _segmentar(rede, trechos, desloc):
     return out
 
 
+# ============================================================ ajuste à frota
+def _chave_frota(d):
+    pa = d["pa"]
+    return pa["id_tipo_equipamento"], pa["turno"]
+
+
+def _juntar(destino, origem, dados):
+    destino["req"] |= origem["req"]
+    destino["cts"] += origem["cts"]
+    destino["pg"] = unary_union([destino["pg"].buffer(0), origem["pg"].buffer(0)])
+    if 0 in origem["pts"]:
+        destino["pts"][0] = origem["pts"][0]   # termina onde o segundo terminava
+    destino["km"] += origem["km"]
+    destino["fundidos"] += [origem["cod"]] + origem["fundidos"]
+    dados.remove(origem)
+
+
+def _planejar_fusoes(dados, limites, distancia, entre_ras=False):
+    """Junta circuitos inteiros até que, em cada dia, o nº de circuitos de cada
+    turno/equipamento caiba na frota do edital. Só junta circuitos com os mesmos
+    dias, horário, turno, equipamento e RA (no Plano Piloto, a mesma Asa), vizinhos
+    até 'distancia'; sempre o par de menor km somado (equilibra a carga).
+    entre_ras=True permite, em último caso, juntar circuitos vizinhos de RAs diferentes.
+    Devolve ([(cod_destino, cod_origem)], [descrição do que não coube])."""
+    fusoes = []
+
+    def excesso():
+        cont = Counter()
+        for d in dados:
+            eq, t = _chave_frota(d)
+            for i, nome in enumerate(E.DIAS_CAMPOS):
+                if d["pa"][nome]:
+                    cont[(i, eq, t)] += 1
+        return {k: n for k, n in cont.items()
+                if k[1] in limites and n > limites[k[1]].get(k[2], 0)}
+
+    def compativeis(a, b, mesma_ra):
+        pa, pb = a["pa"], b["pa"]
+        if _chave_frota(a) != _chave_frota(b):
+            return False
+        if any(bool(pa[n]) != bool(pb[n]) for n in E.DIAS_CAMPOS):
+            return False
+        if (pa["horario_inicio"], pa["horario_termino"]) != \
+                (pb["horario_inicio"], pb["horario_termino"]):
+            return False
+        if mesma_ra and a["ra"] != b["ra"]:
+            return False
+        # Plano Piloto: Asa Norte e Asa Sul nunca no mesmo circuito (Tabela 1, Nome)
+        if 1 in (a["ra"], b["ra"]):
+            asa = lambda d: re.match(r"^(Asa (Norte|Sul))\b", d["pa"]["nome_circuito"] or "")
+            ma, mb = asa(a), asa(b)
+            if not (ma and mb and ma.group(1) == mb.group(1)):
+                return False
+        return a["pg"].distance(b["pg"]) <= distancia
+
+    while True:
+        exc = excesso()
+        if not exc:
+            return fusoes, []
+        alvo = {(eq, t) for _, eq, t in exc}
+        dias_exc = {(i, eq, t) for i, eq, t in exc}
+        melhor = None
+        for mesma_ra in (True,) if not entre_ras else (True, False):
+            cands = [d for d in dados if _chave_frota(d) in alvo and any(
+                (i, *_chave_frota(d)) in dias_exc
+                for i, n in enumerate(E.DIAS_CAMPOS) if d["pa"][n])]
+            for i, a in enumerate(cands):
+                for b in cands[i + 1:]:
+                    if compativeis(a, b, mesma_ra):
+                        km = a["km"] + b["km"]
+                        if melhor is None or km < melhor[0]:
+                            melhor = (km, a, b)
+            if melhor:
+                break
+        if melhor is None:
+            return fusoes, [f"{E.DIAS_NOMES[i]} {t}: {n} circuitos de "
+                            f"{E.EQUIPAMENTOS.get(eq, eq)} para {limites[eq].get(t, 0)} "
+                            "veículos" for (i, eq, t), n in sorted(exc.items())]
+        _, a, b = melhor
+        destino, origem = (a, b) if a["km"] >= b["km"] else (b, a)
+        fusoes.append((destino["cod"], origem["cod"]))
+        _juntar(destino, origem, dados)
+
+
 # =========================================================== nomes e endereços
 def _endereco_texto(enderecos):
     vistos, out = set(), []
@@ -383,7 +467,8 @@ def slu_redesenhar_coleta(gdb_atual, rede_gdb, pasta_saida, regioes, vias_endere
                           sentidos=None, rede_camada="ArquivoRua", servico=None, lote=None,
                           respeitar_sentido=True, buffer_poligono=25.0, circuitos=None,
                           restaurar_shx=False, sobrescrever=False, carregar=True,
-                          campo_sentido="sentido_proposto"):
+                          campo_sentido="sentido_proposto", ajustar_frota=False,
+                          distancia_fusao=1500.0):
     """Redesenha um plano de coleta (CC/CS) existente sobre a rede viária, no padrão
     do Anexo G e com os lotes do novo edital. Grava <pasta_saida>/<CC01>.gdb novo,
     <CC01>_pendencias.gpkg e devolve o resumo com a validação."""
@@ -445,6 +530,7 @@ def slu_redesenhar_coleta(gdb_atual, rede_gdb, pasta_saida, regioes, vias_endere
     excluidos = []
     avisos = []
     coleta_usada = set()
+    dados = []   # fase 1: trechos de coleta, RA e lote de cada circuito
     for pg, pa in sorted(pols, key=lambda x: x[1]["codigo_circuito"] or 0):
         cod = pa["codigo_circuito"]
         ts = pa["id_tipo_servico"]
@@ -477,7 +563,27 @@ def slu_redesenhar_coleta(gdb_atual, rede_gdb, pasta_saida, regioes, vias_endere
             continue
         if fora:
             avisos.append(f"{cod}: {len(fora)} trechos fora do Lote {lote} removidos")
+        dados.append({"pg": pg, "pa": pa, "cod": cod, "ts": ts, "req": req, "cts": cts,
+                      "ra": ra, "pts": {a["tipo"]: (g, a) for g, a in pts_por.get(cod, [])},
+                      "km": sum(rede.comp[i] for i in req) / 1000, "fundidos": []})
 
+    # fase 2: junta circuitos para caber na frota do edital (Anexo R)
+    fusoes = []
+    if ajustar_frota:
+        limites = E.FROTA_ANEXO_R.get((servico, lote))
+        if limites:
+            fusoes, sem_solucao = _planejar_fusoes(dados, limites, distancia_fusao)
+            for s in sem_solucao:
+                avisos.append(f"Frota insuficiente mesmo juntando circuitos: {s}")
+            for d in dados:
+                if d["fundidos"]:
+                    avisos.append(f"{d['cod']}: recebeu os circuitos {d['fundidos']} para caber "
+                                  f"na frota do Anexo R ({d['km']:.1f} km de coleta)")
+
+    # fase 3: rota, linhas, pontos, polígono e atributos
+    for d in dados:
+        pg, pa, cod, ts, req, cts, ra = (d["pg"], d["pa"], d["cod"], d["ts"], d["req"],
+                                         d["cts"], d["ra"])
         passagem, contramao = set(), set()
         if req:
             passagem, contramao = _vias_de_passagem(rede, req)
@@ -494,7 +600,7 @@ def slu_redesenhar_coleta(gdb_atual, rede_gdb, pasta_saida, regioes, vias_endere
         ordem = []
         if req and ts in (0, 1, 8, 9):
             nos_req = {rede.u[i] for i in req} | {rede.v[i] for i in req}
-            antigos = {a["tipo"]: (g, a) for g, a in pts_por.get(cod, [])}
+            antigos = d["pts"]
             prim = min(req)
             ref_ini = antigos[1][0] if 1 in antigos else Point(rede.no_xy[rede.u[prim]])
             n_ini = rede.no_mais_proximo(ref_ini, nos_req)
@@ -595,6 +701,7 @@ def slu_redesenhar_coleta(gdb_atual, rede_gdb, pasta_saida, regioes, vias_endere
         "success": True, "gdb": gdb_novo, "pendencias_gpkg": pend_path,
         "circuitos_redesenhados": len(resultado),
         "circuitos_excluidos": excluidos,
+        "fusoes": [{"fica": a, "entra": b} for a, b in fusoes],
         "km_coleta": round(sum(r["km_coleta"] for r in resultado), 1),
         "km_passagem": round(sum(r["km_passagem"] for r in resultado), 1),
         "vias_urbanas_sem_circuito_km_por_ra": {k: round(v, 1) for k, v in km_ra.most_common()},

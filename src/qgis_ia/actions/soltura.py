@@ -55,26 +55,56 @@ def _conflita(ocupado, novos):
     return any(a < d and c < b for a, b in novos for c, d in ocupado)
 
 
-def _alocar(circuitos, folga, dois_turnos):
-    """First-fit: circuitos mais longos/frequentes primeiro, por tipo de equipamento."""
-    veiculos = []  # {"tipo", "ocupado": [...], "circuitos": [...], "turnos": set()}
-    ordem = sorted(circuitos, key=lambda c: (c["equip"], -sum(c["dias"]), c["ini"], c["codigo"]))
+def _alocar(circuitos, folga, dois_turnos, limites=None):
+    """First-fit por tipo de equipamento. Devolve (veiculos, sem_veiculo).
+
+    Sem 'limites', cria quantos veículos forem precisos. Com 'limites'
+    ({tipo: {"Diurno": n, "Noturno": m}}, a frota do edital), a frota é fixa: com
+    dois_turnos os m veículos do noturno são os mesmos n do diurno (os primeiros m);
+    sem dois_turnos são n + m veículos distintos. O que não cabe vai para sem_veiculo.
+    """
+    veiculos = []  # {"tipo", "ocupado", "circuitos", "turnos", "pode": set(turnos)}
+    sem_veiculo = []
+    if limites:
+        for tipo, lim in sorted(limites.items()):
+            n, m = int(lim.get("Diurno", 0)), int(lim.get("Noturno", 0))
+            if dois_turnos:
+                for k in range(max(n, m)):
+                    pode = ({"Diurno"} if k < n else set()) | ({"Noturno"} if k < m else set())
+                    veiculos.append({"tipo": tipo, "ocupado": [], "circuitos": [],
+                                     "turnos": set(), "pode": pode})
+            else:
+                veiculos += [{"tipo": tipo, "ocupado": [], "circuitos": [], "turnos": set(),
+                              "pode": {"Diurno"}} for _ in range(n)]
+                veiculos += [{"tipo": tipo, "ocupado": [], "circuitos": [], "turnos": set(),
+                              "pode": {"Noturno"}} for _ in range(m)]
+    # noturno primeiro quando a frota é fixa: é o turno com menos veículos
+    ordem = sorted(circuitos, key=lambda c: (c["equip"],
+                                             0 if (limites and c["turno"] == "Noturno") else 1,
+                                             -sum(c["dias"]), c["ini"], c["codigo"]))
     for c in ordem:
         iv = _intervalos(c["dias"], c["ini"], c["fim"], folga)
+        escolhido = None
         for v in veiculos:
             if v["tipo"] != c["equip"]:
+                continue
+            if "pode" in v and c["turno"] not in v["pode"]:
                 continue
             if not dois_turnos and v["turnos"] and c["turno"] not in v["turnos"]:
                 continue
             if not _conflita(v["ocupado"], iv):
+                escolhido = v
                 break
-        else:
-            v = {"tipo": c["equip"], "ocupado": [], "circuitos": [], "turnos": set()}
-            veiculos.append(v)
-        v["ocupado"].extend(iv)
-        v["circuitos"].append(c)
-        v["turnos"].add(c["turno"])
-    return veiculos
+        if escolhido is None:
+            if limites:
+                sem_veiculo.append(c)
+                continue
+            escolhido = {"tipo": c["equip"], "ocupado": [], "circuitos": [], "turnos": set()}
+            veiculos.append(escolhido)
+        escolhido["ocupado"].extend(iv)
+        escolhido["circuitos"].append(c)
+        escolhido["turnos"].add(c["turno"])
+    return veiculos, sem_veiculo
 
 
 def _ler_circuitos(gdb_path):
@@ -112,10 +142,14 @@ def _ler_circuitos(gdb_path):
 
 
 def slu_planilha_soltura(gdb_path, saida_xlsx, intervalo_min=60, dois_turnos=True,
-                         servico=None, lote=None, prefixo_veiculo="VA"):
+                         servico=None, lote=None, prefixo_veiculo="VA", frota="edital"):
     """Gera a planilha de soltura (.xlsx) do plano: soltura por dia/turno, frota
-    dimensionada (aba Frota, com placas a preencher), grade semanal por veículo,
-    resumo de veículos por dia/turno e a lista de circuitos."""
+    (aba Frota, com placas a preencher), grade semanal por veículo, resumo de
+    veículos por dia/turno (necessário x edital) e a lista de circuitos.
+
+    frota="edital" usa a frota do Anexo R do lote (VA01... na ordem do edital) e marca
+    "SEM VEÍCULO" o que não couber; frota="dimensionar" cria quantos veículos forem
+    precisos; ou um dict {codigo_equipamento: {"Diurno": n, "Noturno": m}}."""
     from openpyxl import Workbook
     from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
     from openpyxl.utils import get_column_letter
@@ -123,21 +157,37 @@ def slu_planilha_soltura(gdb_path, saida_xlsx, intervalo_min=60, dois_turnos=Tru
     servico, lote = slu._servico_lote_de_gdb(gdb_path, servico, lote)
     prefixo = E.lote_codigo(servico, lote)
     circuitos, sem_horario = _ler_circuitos(gdb_path)
-    veiculos = _alocar(circuitos, int(intervalo_min), bool(dois_turnos))
-    so_um_turno = _alocar(circuitos, int(intervalo_min), False)
+    if frota == "edital":
+        limites = E.FROTA_ANEXO_R.get((servico, lote))
+        if limites is None:
+            raise ValueError(f"Sem frota do Anexo R cadastrada para {servico} lote {lote}; "
+                             "use frota='dimensionar' ou informe um dict.")
+    elif frota in (None, "dimensionar"):
+        limites = None
+    else:
+        limites = {int(k): v for k, v in dict(frota).items()}
+    veiculos, sem_veiculo = _alocar(circuitos, int(intervalo_min), bool(dois_turnos), limites)
+    necessario, _ = _alocar(circuitos, int(intervalo_min), bool(dois_turnos))
     por_tipo = Counter(v["tipo"] for v in veiculos)
-    ordem_v = sorted(veiculos, key=lambda v: (v["tipo"], min(c["ini"] for c in v["circuitos"]),
-                                              min(c["codigo"] for c in v["circuitos"])))
+    if limites:
+        ordem_v = veiculos  # ordem do edital: os primeiros fazem diurno e noturno
+    else:
+        ordem_v = sorted(veiculos, key=lambda v: (v["tipo"],
+                                                  min(c["ini"] for c in v["circuitos"]),
+                                                  min(c["codigo"] for c in v["circuitos"])))
     for n, v in enumerate(ordem_v, start=1):
         v["id"] = f"{prefixo_veiculo}{n:02d}"
         for c in v["circuitos"]:
             c["veiculo"] = v["id"]
+    for c in sem_veiculo:
+        c["veiculo"] = "SEM VEÍCULO"
 
     wb = Workbook()
     azul = PatternFill("solid", fgColor="1F4E78")
     claro = PatternFill("solid", fgColor="DDEBF7")
     noite = PatternFill("solid", fgColor="E7E6F7")
     amarelo = PatternFill("solid", fgColor="FFF2CC")
+    vermelho = PatternFill("solid", fgColor="F8CBAD")
     fino = Side(style="thin", color="A6A6A6")
     borda = Border(left=fino, right=fino, top=fino, bottom=fino)
     centro = Alignment(horizontal="center", vertical="center", wrap_text=True)
@@ -181,32 +231,39 @@ def slu_planilha_soltura(gdb_path, saida_xlsx, intervalo_min=60, dois_turnos=Tru
                     E.EQUIPAMENTOS.get(c["equip"], c["equip"]), c["codigo"], c["nome"], c["ra"],
                     c["tipo_servico"], c["frequencia"], c["km_coleta"], c["km_passagem"],
                     c["destino"], c["pesagem"], None, None, None]
+            if c["veiculo"] == "SEM VEÍCULO":
+                vals[5] = None
+                vals[18] = "Sem veículo na frota do Anexo R para este dia/turno"
             for i, v in enumerate(vals, start=1):
                 cel = ws.cell(lin, i, v)
                 cel.border = borda
-                if c["turno"] == "Noturno":
+                if c["veiculo"] == "SEM VEÍCULO":
+                    cel.fill = vermelho
+                elif c["turno"] == "Noturno":
                     cel.fill = noite
-            for i in (17, 18, 19):
-                ws.cell(lin, i).fill = amarelo
+            if c["veiculo"] != "SEM VEÍCULO":
+                for i in (17, 18, 19):
+                    ws.cell(lin, i).fill = amarelo
             lin += 1
     ws.auto_filter.ref = f"A4:{get_column_letter(len(cols))}{lin - 1}"
 
     # ------------------------------------------------------------ Frota
     wf = wb.create_sheet("Frota")
-    wf["A1"] = f"Frota dimensionada — {prefixo}"
+    wf["A1"] = (f"Frota do Anexo R — {prefixo}" if limites else f"Frota dimensionada — {prefixo}")
     wf["A1"].font = Font(bold=True, size=13)
     wf["A2"] = "Preencha a coluna Placa (amarela); ela aparece automaticamente na Soltura."
     wf["A2"].font = Font(italic=True, color="595959")
     cabecalho(wf, 4, ["Veículo", "Código Equip.", "Equipamento", "Placa", "Nº circuitos",
-                      "Turnos", "Circuitos", "Km coleta/semana"],
-              (13, 9, 34, 12, 10, 16, 60, 14))
+                      "Turnos em uso", "Circuitos", "Km coleta/semana", "Turnos no edital"],
+              (13, 9, 34, 12, 10, 16, 60, 14, 16))
     for r, v in enumerate(ordem_v, start=5):
         kms = sum(c["km_coleta"] * sum(c["dias"]) for c in v["circuitos"])
         vals = [v["id"], v["tipo"], E.EQUIPAMENTOS.get(v["tipo"], v["tipo"]), None,
-                len(v["circuitos"]), " e ".join(sorted(v["turnos"])),
+                len(v["circuitos"]),
+                " e ".join(sorted(v["turnos"])) or "Reserva (sem circuito)",
                 ", ".join(f"{c['codigo']} ({c['turno'][0]} {''.join(E.DIAS_INICIAL[i] for i, a in enumerate(c['dias']) if a)})"
                           for c in sorted(v["circuitos"], key=lambda c: c["ini"])),
-                round(kms, 1)]
+                round(kms, 1), " e ".join(sorted(v.get("pode", v["turnos"])))]
         for i, val in enumerate(vals, start=1):
             cel = wf.cell(r, i, val)
             cel.border = borda
@@ -236,32 +293,54 @@ def slu_planilha_soltura(gdb_path, saida_xlsx, intervalo_min=60, dois_turnos=Tru
     wr = wb.create_sheet("Resumo")
     wr["A1"] = titulo
     wr["A1"].font = Font(bold=True, size=13)
-    tipos = sorted({c["equip"] for c in circuitos})
-    cabecalho(wr, 3, ["Dia", "Turno"] + [E.EQUIPAMENTOS.get(t, t) for t in tipos] + ["Total"],
-              [12, 10] + [26] * len(tipos) + [9])
+    tipos = sorted({c["equip"] for c in circuitos} | set(limites or {}))
+    cab = ["Dia", "Turno"]
+    for t in tipos:
+        nome = E.EQUIPAMENTOS.get(t, t)
+        cab += [f"{nome} — circuitos", f"{nome} — edital"] if limites else [nome]
+    cabecalho(wr, 3, cab, [12, 10] + [22] * (len(cab) - 2))
     r = 4
+    falta_total = 0
     for dn in E.DIAS_NOMES:
         for t in ("Diurno", "Noturno"):
             cnt = contagem.get((dn, t), Counter())
-            vals = [dn, t] + [cnt.get(k, 0) for k in tipos] + [sum(cnt.values())]
+            if not cnt:
+                continue
+            vals = [dn, t]
+            for k in tipos:
+                vals.append(cnt.get(k, 0))
+                if limites:
+                    vals.append(limites.get(k, {}).get(t, 0))
             for i, val in enumerate(vals, start=1):
                 wr.cell(r, i, val).border = borda
+            if limites:
+                for j, k in enumerate(tipos):
+                    col = 3 + 2 * j
+                    if cnt.get(k, 0) > limites.get(k, {}).get(t, 0):
+                        wr.cell(r, col).fill = vermelho
+                        falta_total += 1
             r += 1
     r += 1
-    wr.cell(r, 1, "Frota necessária").font = Font(bold=True)
+    wr.cell(r, 1, "Frota" + (" do Anexo R (em uso / total)" if limites else " necessária")) \
+        .font = Font(bold=True)
     r += 1
     for t in tipos:
         wr.cell(r, 1, E.EQUIPAMENTOS.get(t, t))
-        wr.cell(r, 3, por_tipo.get(t, 0))
+        usados = sum(1 for v in veiculos if v["tipo"] == t and v["circuitos"])
+        wr.cell(r, 3, f"{usados} / {por_tipo.get(t, 0)}" if limites else por_tipo.get(t, 0))
         r += 1
-    wr.cell(r, 1, "Total (veículo pode fazer diurno e noturno)" if dois_turnos else "Total")
-    wr.cell(r, 3, len(veiculos)).font = Font(bold=True)
+    if limites:
+        r += 1
+        wr.cell(r, 1, "Circuitos sem veículo (por semana)").font = Font(bold=True)
+        wr.cell(r, 3, len(sem_veiculo))
+        r += 1
+        wr.cell(r, 1, "Frota que os circuitos atuais exigiriam (sem limite)")
+        wr.cell(r, 3, len(necessario))
+        r += 1
     r += 1
-    wr.cell(r, 1, "Total se cada veículo fizesse um só turno")
-    wr.cell(r, 3, len(so_um_turno))
-    r += 2
     wr.cell(r, 1, f"Intervalo mínimo entre circuitos do mesmo veículo: {intervalo_min} min. "
-                  "Sem reserva técnica: acrescente a reserva exigida no contrato.")
+                  + ("Veículos do noturno são os primeiros do diurno (mesmo caminhão, outra "
+                     "guarnição)." if dois_turnos else "Cada veículo faz um só turno."))
     wr.cell(r, 1).font = Font(italic=True, color="595959")
     wr.column_dimensions["A"].width = 44
 
@@ -283,9 +362,15 @@ def slu_planilha_soltura(gdb_path, saida_xlsx, intervalo_min=60, dois_turnos=Tru
     pico = max(contagem.items(), key=lambda kv: sum(kv[1].values())) if contagem else None
     return {
         "success": True, "xlsx": saida_xlsx, "circuitos": len(circuitos),
+        "frota_usada": "Anexo R" if limites else "dimensionada",
         "circuitos_sem_horario_ou_dias": sem_horario,
         "frota": {E.EQUIPAMENTOS.get(t, t): n for t, n in sorted(por_tipo.items())},
-        "frota_total": len(veiculos), "frota_total_um_turno_por_veiculo": len(so_um_turno),
+        "frota_total": len(veiculos),
+        "veiculos_reserva": [v["id"] for v in veiculos if not v["circuitos"]],
+        "frota_que_os_circuitos_exigem": len(necessario),
+        "circuitos_sem_veiculo": [{"codigo": c["codigo"], "nome": c["nome"], "turno": c["turno"],
+                                   "equipamento": E.EQUIPAMENTOS.get(c["equip"], c["equip"])}
+                                  for c in sorted(sem_veiculo, key=lambda c: c["codigo"])],
         "pico": {"dia_turno": f"{pico[0][0]} {pico[0][1]}",
                  "veiculos": sum(pico[1].values())} if pico else None,
         "linhas_soltura": lin - 5,

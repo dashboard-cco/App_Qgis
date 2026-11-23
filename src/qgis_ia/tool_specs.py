@@ -377,7 +377,12 @@ TOOLS = {
               "pasta_saida": _S,
               "circuitos": {"type": "array", "items": _I,
                             "description": "Só estes códigos (para teste)"},
-              "buffer_poligono": _N, "restaurar_shx": _B, "sobrescrever": _B, "carregar": _B},
+              "buffer_poligono": _N, "restaurar_shx": _B, "sobrescrever": _B, "carregar": _B,
+              "ajustar_frota": {"type": "boolean", "description":
+                                "Junta circuitos (mesmos dias/horário/RA, vizinhos) até cada "
+                                "dia e turno caber na frota do Anexo R"},
+              "distancia_fusao": _s("Distância máxima entre circuitos para juntar, em m "
+                                    "(padrão 1500)")},
              ["gdb_atual", "rede_gdb", "regioes", "pasta_saida"])),
 
     "slu_planilha_soltura": (

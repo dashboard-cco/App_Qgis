@@ -107,6 +107,31 @@ try:
     # nós da borda inferior têm grau 3 na grade: não pode emendar através deles
     check(all(len(s[2]) == 1 for s in segs), "não emenda através de cruzamentos")
     check(len(segs) == 8, f"cada trecho de 200 m vira 2 de 100 m ({len(segs)})")
+    # junção de circuitos para caber na frota
+    from shapely.geometry import box
+
+    def circ(cod, x, nome, ra, dias, km, turno="Noturno"):
+        pa = {"id_tipo_equipamento": 0, "turno": turno, "nome_circuito": nome,
+              "horario_inicio": "19:00", "horario_termino": "03:20"}
+        pa.update({d: (1 if i in dias else 0) for i, d in enumerate(
+            ["segunda", "terca", "quarta", "quinta", "sexta", "sabado", "domingo"])})
+        return {"cod": cod, "pa": pa, "ra": ra, "km": km, "req": set(), "cts": [], "pts": {},
+                "fundidos": [], "pg": box(x, 0, x + 100, 100)}
+
+    SQS, TQS = (0, 2, 4), (1, 3, 5)
+    dados = [circ(1, 0, "Asa Norte 1 A3SQS", 1, SQS, 10), circ(2, 150, "Asa Sul 2 A3SQS", 1, SQS, 5),
+             circ(3, 300, "Asa Sul 3 A3SQS", 1, SQS, 8), circ(4, 0, "Gama 4 A3TQS", 2, TQS, 9)]
+    fus, sem = R._planejar_fusoes(dados, {0: {"Noturno": 2}}, 1500)
+    check(fus == [(3, 2)], f"junta só Asa Sul com Asa Sul ({fus})")
+    check(not sem and len(dados) == 3, "cabe em 2 veículos por noite")
+    c3 = next(d for d in dados if d["cod"] == 3)
+    check(c3["km"] == 13 and c3["fundidos"] == [2], "carga somada")
+    dados = [circ(1, 0, "Asa Norte 1 A3SQS", 1, SQS, 10), circ(2, 150, "Asa Sul 2 A3SQS", 1, SQS, 5)]
+    fus, sem = R._planejar_fusoes(dados, {0: {"Noturno": 1}}, 1500)
+    check(not fus and sem, "Asa Norte + Asa Sul não juntam: sobra pendência")
+    dados = [circ(1, 0, "Gama 1 A3SQS", 2, SQS, 10), circ(2, 150, "Gama 2 A3TQS", 2, TQS, 5)]
+    fus, sem = R._planejar_fusoes(dados, {0: {"Noturno": 1}}, 1500)
+    check(not fus and not sem, "dias diferentes já cabem: nada a juntar")
 finally:
     shutil.rmtree(tmp, ignore_errors=True)
 

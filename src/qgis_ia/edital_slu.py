@@ -75,6 +75,22 @@ RA_POR_LOTE = {
     3: {2, 8, 12, 13, 14, 15, 16, 17, 19, 21, 24, 27, 33, 35},
 }
 
+# Anexo R (Tabela de Quantidades de Mão de Obra e Equipamentos): veículos de coleta por
+# lote e turno, com o código da Tabela 4 do Anexo G. P1 inclui os compactadores 19 m³
+# c/ munk da coleta de semienterrado (P1A no Anexo R), usados nos circuitos mistos.
+# P2: compactadores 15 m³ (porta a porta), 15 m³ c/ munk (LEVs) e 6 m³.
+FROTA_ANEXO_R = {
+    ("P1", 1): {0: {"Diurno": 32, "Noturno": 17}, 1: {"Diurno": 10, "Noturno": 0}},
+    ("P1", 2): {0: {"Diurno": 30, "Noturno": 19}, 1: {"Diurno": 6, "Noturno": 0}},
+    ("P1", 3): {0: {"Diurno": 37, "Noturno": 16}, 1: {"Diurno": 7, "Noturno": 0}},
+    ("P2", 1): {2: {"Diurno": 6, "Noturno": 4}, 3: {"Diurno": 2, "Noturno": 0},
+                14: {"Diurno": 1, "Noturno": 0}},
+    ("P2", 2): {2: {"Diurno": 11, "Noturno": 6}, 3: {"Diurno": 1, "Noturno": 0},
+                14: {"Diurno": 2, "Noturno": 0}},
+    ("P2", 3): {2: {"Diurno": 9, "Noturno": 3}, 3: {"Diurno": 1, "Noturno": 0},
+                14: {"Diurno": 1, "Noturno": 0}},
+}
+
 # Edital, item 7.8: textos em Word, Arial 12 no corpo e 14 nos títulos.
 FONTE_DOCX = "Arial"
 TAM_CORPO_PT, TAM_TITULO_PT = 12, 14
