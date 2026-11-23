@@ -7,7 +7,7 @@ Plugin de IA para QGIS, com dois modos de uso:
 2. **Painel de chat** — você descreve a tarefa e o plugin executa, usando sua própria
    chave de API (`ANTHROPIC_API_KEY`).
 
-Versão 2.1.0. Antes chamava-se "Claude AI Assistant" (pasta `qgis_claude_ai`).
+Versão 2.2.0. Antes chamava-se "Claude AI Assistant" (pasta `qgis_claude_ai`).
 
 ## Instalação
 
@@ -63,7 +63,7 @@ o servidor, o arquivo é apagado e o token deixa de valer.
 `render_map`, `list_algorithms`
 
 **Camadas** — `list_layers`, `add_vector_layer`, `add_raster_layer`, `add_basemap`,
-`create_memory_layer`, `remove_layer`, `rename_layer`, `export_layer`,
+`create_memory_layer`, `duplicar_camada_com_ra`, `remove_layer`, `rename_layer`, `export_layer`,
 `set_layer_visibility`, `zoom_to_layer`, `set_canvas_extent`, `save_project`
 
 **Edição** — `add_features`, `update_features`, `delete_features`, `add_field`,

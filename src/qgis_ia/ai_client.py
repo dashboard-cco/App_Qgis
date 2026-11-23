@@ -79,6 +79,13 @@ AÇÕES DISPONÍVEIS (use exatamente estes nomes):
    params: {"layer_name": "nome_atual", "new_name": "nome_novo"}
    Retorna: {"success": true}
 
+9b. duplicar_camada_com_ra
+   params: {"layer_name": "nome", "output_name": "nome_RA",
+            "ra_layer": "limites_ra", "ra_name_field": "nome"}  (só layer_name é obrigatório)
+   Copia a camada (temporária) e cria a coluna "RA". Preenche por localização com ra_layer,
+   ou pelo campo codigo_ra se existir; senão deixa vazia.
+   Retorna: {"layer_name": "...", "ra_preenchida": N, "ra_vazia": N}
+
 --- GEOPROCESSAMENTO (VETOR) ---
 
 10. run_buffer

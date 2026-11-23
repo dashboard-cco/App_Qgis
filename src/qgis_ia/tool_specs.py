@@ -99,6 +99,16 @@ TOOLS = {
     "rename_layer": (
         "Renomeia uma camada.",
         _obj({"layer_name": _LAYER, "new_name": _S}, ["layer_name", "new_name"])),
+    "duplicar_camada_com_ra": (
+        "Copia uma camada vetorial para uma nova camada temporária e cria nela a coluna 'RA' "
+        "(Região Administrativa). Preenche a RA por localização se 'ra_layer' (polígonos das "
+        "RAs) for informado; senão pelo campo codigo_ra, se existir; senão deixa vazia. "
+        "A camada original não é alterada.",
+        _obj({"layer_name": _LAYER,
+              "output_name": _s("Nome da cópia (padrão: <camada>_RA)"),
+              "ra_layer": _s("Camada de polígonos das RAs, para preencher por localização"),
+              "ra_name_field": _s("Campo com o nome da RA em ra_layer (padrão: 1º campo texto)")},
+             ["layer_name"])),
 
     # ---------------------------------------------------- geoprocessamento
     "run_buffer": (

@@ -17,6 +17,7 @@ ACTIONS = {
     "zoom_to_layer": layers.zoom_to_layer,
     "export_layer": layers.export_layer,
     "rename_layer": layers.rename_layer,
+    "duplicar_camada_com_ra": layers.duplicar_camada_com_ra,
 
     # Geoprocessamento (vetor)
     "run_buffer": processing.run_buffer,
