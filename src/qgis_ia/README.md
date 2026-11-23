@@ -7,7 +7,7 @@ Plugin de IA para QGIS, com dois modos de uso:
 2. **Painel de chat** — você descreve a tarefa e o plugin executa, usando sua própria
    chave de API (`ANTHROPIC_API_KEY`).
 
-Versão 2.2.0. Antes chamava-se "Claude AI Assistant" (pasta `qgis_claude_ai`).
+Versão 2.3.0. Antes chamava-se "Claude AI Assistant" (pasta `qgis_claude_ai`).
 
 ## Instalação
 
@@ -121,6 +121,26 @@ Decisões tomadas onde o Anexo G e os modelos divergem:
 - Serviços sob demanda não têm modelo de .gdb: camada `lm_area_circuito_planejado` com os
   campos da seção 6.3.2 (inclui `numero_equipes`).
 - Numeração de serviços: a do Anexo G (P1–P12). O Termo de Referência usa outra (P0–P20).
+
+### Redesenho de um plano de coleta existente (`slu_redesenhar_coleta`)
+
+Entrada: o .gdb atual (ex.: `Gdb/CC01.gdb`), a rede viária (`Vias/RedeNetworkAnalyst.gdb`,
+camada `ArquivoRua`), os sentidos (`Vias/ArquivoRua.gpkg`, campo `sentido_proposto`), as
+vias com endereço (`Shp/vias_para_join.shp`, campo `Endereco`) e as RAs
+(`Shp/regioes_administrativas.shp`, campos `ra_cira` e `Lote`). Saída: um .gdb novo,
+`<CC01>_pendencias.gpkg` e `<CC01>_validacao.xlsx`. O .gdb atual não é alterado.
+
+Para cada circuito: as linhas de coleta atuais são traduzidas para trechos da rede; o que
+ficou em outro lote sai (circuitos inteiros vão para `circuitos_para_outro_lote`); as vias
+de passagem são as menores ligações pela rede para o caminhão ir e voltar entre todas as
+partes do circuito; as linhas são cortadas em até 130 m sem quebrar nos cruzamentos;
+polígono, início/fim, Código RA, Nome (Asa Norte/Asa Sul no Plano Piloto) e Endereçamento
+são refeitos. Se o Tipo de Serviço contradiz o código e os dados (ex.: há contêineres), vale
+o código, com aviso.
+
+`respeitar_sentido=false` (mão dupla) reproduz a prática atual (poucas vias de passagem).
+Com `true`, as mãos únicas do `sentido_proposto` (FT/TF) entram no cálculo; o campo
+`orient_linha` sozinho é só a orientação do desenho OSM × rede, não a mão da via.
 
 Testes: `python-qgis-ltr.bat tests\test_slu.py` (não precisa do QGIS aberto).
 

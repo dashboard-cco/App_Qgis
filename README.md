@@ -15,7 +15,8 @@ Anexo G do Edital do Pregão Presencial nº 90005/2026 (pasta `Edital/`): File G
 | v1.1.0 | `qgis-claude-ai-v1.1.0.zip` (código-fonte em `v1.1.0/`) |
 | v2.0.0 | `qgis_ia-v2.0.0.zip` |
 | v2.1.0 | `qgis_ia-v2.1.0.zip` — Planos de Serviço SLU-DF |
-| v2.2.0 | `qgis_ia-v2.2.0.zip` (código-fonte em `src/qgis_ia/`) — `duplicar_camada_com_ra` |
+| v2.2.0 | `qgis_ia-v2.2.0.zip` — `duplicar_camada_com_ra` |
+| v2.3.0 | `qgis_ia-v2.3.0.zip` (código-fonte em `src/qgis_ia/`) — redesenho do plano de coleta (`slu_redesenhar_coleta`) |
 
 Os zips também estão publicados na aba **Releases** do repositório.
 
@@ -29,4 +30,5 @@ No QGIS: *Complementos → Gerenciar e instalar complementos → Instalar a part
 "C:\Program Files\QGIS 3.44.15\bin\python-qgis-ltr.bat" tests\test_slu.py
 "C:\Program Files\QGIS 3.44.15\bin\python-qgis-ltr.bat" tests\test_registro.py
 "C:\Program Files\QGIS 3.44.15\bin\python-qgis-ltr.bat" tests\test_duplicar_ra.py
+"C:\Program Files\QGIS 3.44.15\bin\python-qgis-ltr.bat" tests\test_redesenho.py
 ```

@@ -31,7 +31,7 @@ def check(cond, msg):
 proj = QgsProject.instance()
 
 # 1) camada com codigo_ra (polígonos reais do CC01.gdb, só leitura)
-gdb = os.path.join(AQUI, "..", "CC01.gdb")
+gdb = os.path.join(AQUI, "..", "Gdb", "CC01.gdb")
 if os.path.isdir(gdb):
     pol = QgsVectorLayer(f"{gdb}|layername=lm_area_circuito_planejado", "circuitos", "ogr")
     check(pol.isValid(), "abre CC01")

@@ -359,6 +359,27 @@ TOOLS = {
               "numero_equipes": _I, "carregar": _B},
              ["servico", "lote", "pasta_saida"])),
 
+    "slu_redesenhar_coleta": (
+        "Redesenha um plano de coleta existente (CC0X/CS0X .gdb) sobre a rede viária, no padrão "
+        "do Anexo G e com os lotes do novo edital: traduz as linhas atuais para a rede, tira o "
+        "que ficou em outro lote, calcula as vias de passagem pela rede (respeitando a mão), "
+        "corta em 50-130 m, refaz polígonos, início/fim, Código RA, nome e endereçamento. "
+        "Grava um .gdb NOVO (o atual não muda), um GeoPackage de pendências e a validação. "
+        "Demora alguns minutos. [grava arquivo]",
+        _obj({"gdb_atual": _s("Plano atual, ex.: E:/.../Gdb/CC01.gdb"),
+              "rede_gdb": _s("Rede viária, ex.: E:/.../Vias/RedeNetworkAnalyst.gdb"),
+              "rede_camada": _s("Camada de linhas da rede (padrão ArquivoRua)"),
+              "sentidos": _s("GeoPackage com ID e o campo de sentido (ArquivoRua.gpkg)"),
+              "campo_sentido": _s("Campo com FT/TF para mão única (padrão sentido_proposto)"),
+              "respeitar_sentido": _B,
+              "vias_endereco": _s("Shapefile de vias com o campo Endereco"),
+              "regioes": _s("Shapefile das RAs com ra_cira e Lote"),
+              "pasta_saida": _S,
+              "circuitos": {"type": "array", "items": _I,
+                            "description": "Só estes códigos (para teste)"},
+              "buffer_poligono": _N, "restaurar_shx": _B, "sobrescrever": _B, "carregar": _B},
+             ["gdb_atual", "rede_gdb", "regioes", "pasta_saida"])),
+
     # ----------------------------------------------------------- avançado
     "execute_code": (
         "Executa código PyQGIS arbitrário no QGIS e devolve o que foi impresso. "

@@ -2,6 +2,6 @@
 """
 Actions package - Ações disponíveis para o agente de IA
 """
-from . import layers, processing, layout, expressions, slu
+from . import layers, processing, layout, expressions, slu, redesenho
 
-__all__ = ["layers", "processing", "layout", "expressions", "slu"]
+__all__ = ["layers", "processing", "layout", "expressions", "slu", "redesenho"]

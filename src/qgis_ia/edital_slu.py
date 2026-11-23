@@ -56,6 +56,8 @@ RA = {
     22: "Sudoeste e Octogonal", 23: "Varjão", 24: "Park Way", 25: "SCIA",
     26: "Sobradinho II", 27: "Jardim Botânico", 28: "Itapoã", 29: "SIA",
     30: "Vicente Pires", 31: "Fercal", 32: "Sol Nascente/Pôr do Sol", 33: "Arniqueira",
+    # 34 e 35: camada oficial regioes_administrativas (ra_cira); ausentes no domínio antigo
+    34: "Arapoanga", 35: "Água Quente",
 }
 RA_MIN, RA_MAX = 1, 35  # Tabela 1: "intervalo entre 1 e 35"
 
@@ -66,12 +68,11 @@ RA_APELIDOS = {
 }
 
 # Edital, Termo de Referência, Quadro 01 (p. 27-28): RAs de cada lote.
-# Arapoanga (Lote 1) e Água Quente (Lote 3) não têm código no domínio do SLU
-# (prováveis 34 e 35), por isso não entram na conferência.
+# Confere com o campo Lote da camada Shp/regioes_administrativas.shp.
 RA_POR_LOTE = {
-    1: {1, 5, 6, 7, 11, 18, 22, 23, 26, 28, 31},
+    1: {1, 5, 6, 7, 11, 18, 22, 23, 26, 28, 31, 34},
     2: {3, 4, 9, 10, 20, 25, 29, 30, 32},
-    3: {2, 8, 12, 13, 14, 15, 16, 17, 19, 21, 24, 27, 33},
+    3: {2, 8, 12, 13, 14, 15, 16, 17, 19, 21, 24, 27, 33, 35},
 }
 
 # Edital, item 7.8: textos em Word, Arial 12 no corpo e 14 nos títulos.

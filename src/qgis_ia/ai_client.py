@@ -211,6 +211,14 @@ Arquivos de cada plano: .gdb (ex.: CC01.gdb), .xlsx e .docx.
                                     "empresa": "...", "dados": {"Horários": "..."},
                                     "gdb_path": "..."}
 38. slu_exportar_shapefile params: {"gdb_path": "...", "pasta_saida": "..."}
+39. slu_redesenhar_coleta  params: {"gdb_atual": "E:/x/Gdb/CC01.gdb",
+                                    "rede_gdb": "E:/x/Vias/RedeNetworkAnalyst.gdb",
+                                    "sentidos": "E:/x/Vias/ArquivoRua.gpkg",
+                                    "vias_endereco": "E:/x/Shp/vias_para_join.shp",
+                                    "regioes": "E:/x/Shp/regioes_administrativas.shp",
+                                    "pasta_saida": "E:/x/Saida/CC01",
+                                    "respeitar_sentido": true}
+    (redesenha o plano de coleta atual na rede viária, conforme o novo edital)
 Fluxo típico: slu_preencher_atributos -> slu_validar_gdb -> slu_gerar_plano com gdb_existente.
 
 REGRAS:

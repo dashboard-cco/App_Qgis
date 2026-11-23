@@ -25,7 +25,7 @@ MUTATING = frozenset({
     # Planos de Serviço SLU-DF
     "slu_criar_gdb", "slu_preencher_atributos", "slu_exportar_xlsx",
     "slu_gerar_programacao_trimestral", "slu_gerar_docx", "slu_exportar_shapefile",
-    "slu_gerar_plano",
+    "slu_gerar_plano", "slu_redesenhar_coleta",
 })
 
 # Ferramentas que só gravam arquivo quando recebem um parâmetro específico.

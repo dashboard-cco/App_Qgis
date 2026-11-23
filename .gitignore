@@ -9,3 +9,7 @@ __pycache__/
 *.pyc
 .DS_Store
 Thumbs.db
+
+# Resultados gerados (planos redesenhados, relatórios)
+Saida/
+Shp/

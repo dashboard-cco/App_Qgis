@@ -16,7 +16,7 @@ from qgis.PyQt.QtCore import QObject, pyqtSignal
 from qgis.PyQt.QtNetwork import QTcpServer, QHostAddress
 
 from .executor import ACTIONS
-from .actions import inspection, editing, styling, slu, code as code_actions
+from .actions import inspection, editing, styling, slu, redesenho, code as code_actions
 from . import protocol
 
 DEFAULT_PORT = 9876
@@ -26,7 +26,7 @@ MAX_BUFFER = 50 * 1024 * 1024
 
 def build_funcs():
     funcs = dict(ACTIONS)
-    for module in (inspection, editing, styling, slu, code_actions):
+    for module in (inspection, editing, styling, slu, redesenho, code_actions):
         funcs.update(module.TOOLS)
     return funcs
 
