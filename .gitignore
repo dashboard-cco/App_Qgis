@@ -1,0 +1,11 @@
+# Dados geográficos pesados (não versionados)
+*.gdb/
+Vias/
+
+# Arquivos temporários do QGIS / Python
+*.qgz~
+*.qgs~
+__pycache__/
+*.pyc
+.DS_Store
+Thumbs.db

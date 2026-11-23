@@ -1,0 +1,13 @@
+[general]
+name=Claude AI Assistant
+description=Assistente de IA (Claude) integrado ao QGIS via PyQGIS. Executa ações seguras no projeto via chat.
+version=1.1.0
+qgisMinimumVersion=3.40
+author=Seu Nome
+email=seu@email.com
+repository=https://github.com/seu-usuario/qgis-claude-ai
+icon=icon.svg
+tags=ia,claude,anthropic,automacao,pyqgis
+category=Processing
+plugin_type=processing
+hasProcessingProvider=false
