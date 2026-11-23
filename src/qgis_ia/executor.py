@@ -3,7 +3,7 @@
 Executor - Executa planos JSON no QGIS (sandbox seguro)
 """
 import traceback
-from .actions import layers, processing, layout, expressions, slu, redesenho
+from .actions import layers, processing, layout, expressions, slu, redesenho, soltura
 
 
 ACTIONS = {
@@ -51,6 +51,7 @@ ACTIONS = {
 # Planos de Serviço SLU-DF (Anexo G do edital)
 ACTIONS.update(slu.TOOLS)
 ACTIONS.update(redesenho.TOOLS)
+ACTIONS.update(soltura.TOOLS)
 
 
 def execute_plan(plan):

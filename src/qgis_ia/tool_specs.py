@@ -380,6 +380,18 @@ TOOLS = {
               "buffer_poligono": _N, "restaurar_shx": _B, "sobrescrever": _B, "carregar": _B},
              ["gdb_atual", "rede_gdb", "regioes", "pasta_saida"])),
 
+    "slu_planilha_soltura": (
+        "Gera a planilha de soltura (.xlsx) de um plano de coleta: veículo, placa, horário e "
+        "circuito por dia e turno. Dimensiona a frota pelos circuitos (cada circuito com "
+        "veículo fixo, sem sobreposição de horário; códigos VA01, VA02...). Abas Soltura, "
+        "Frota (placas a preencher), Grade semanal, Resumo e Circuitos. [grava arquivo]",
+        _obj({"gdb_path": _S, "saida_xlsx": _S,
+              "intervalo_min": _s("Folga mínima entre circuitos do mesmo veículo (padrão 60)"),
+              "dois_turnos": {"type": "boolean",
+                              "description": "Veículo pode fazer diurno e noturno (padrão true)"},
+              "prefixo_veiculo": _s("Prefixo dos códigos de veículo (padrão VA)")},
+             ["gdb_path", "saida_xlsx"])),
+
     # ----------------------------------------------------------- avançado
     "execute_code": (
         "Executa código PyQGIS arbitrário no QGIS e devolve o que foi impresso. "

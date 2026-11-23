@@ -219,6 +219,10 @@ Arquivos de cada plano: .gdb (ex.: CC01.gdb), .xlsx e .docx.
                                     "pasta_saida": "E:/x/Saida/CC01",
                                     "respeitar_sentido": true}
     (redesenha o plano de coleta atual na rede viária, conforme o novo edital)
+40. slu_planilha_soltura   params: {"gdb_path": "E:/x/Saida/CC01/CC01.gdb",
+                                    "saida_xlsx": "E:/x/Saida/CC01/CC01_soltura.xlsx",
+                                    "dois_turnos": true}
+    (planilha de soltura: veículo VA01, VA02... por circuito, dia e turno)
 Fluxo típico: slu_preencher_atributos -> slu_validar_gdb -> slu_gerar_plano com gdb_existente.
 
 REGRAS:

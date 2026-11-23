@@ -7,7 +7,7 @@ Plugin de IA para QGIS, com dois modos de uso:
 2. **Painel de chat** — você descreve a tarefa e o plugin executa, usando sua própria
    chave de API (`ANTHROPIC_API_KEY`).
 
-Versão 2.3.0. Antes chamava-se "Claude AI Assistant" (pasta `qgis_claude_ai`).
+Versão 2.4.0. Antes chamava-se "Claude AI Assistant" (pasta `qgis_claude_ai`).
 
 ## Instalação
 
@@ -141,6 +141,15 @@ o código, com aviso.
 `respeitar_sentido=false` (mão dupla) reproduz a prática atual (poucas vias de passagem).
 Com `true`, as mãos únicas do `sentido_proposto` (FT/TF) entram no cálculo; o campo
 `orient_linha` sozinho é só a orientação do desenho OSM × rede, não a mão da via.
+
+### Planilha de soltura (`slu_planilha_soltura`)
+
+Lê os circuitos do .gdb (dias, horários, turno, equipamento, km) e dimensiona a frota:
+cada circuito tem um veículo fixo do seu tipo; o veículo só assume outro circuito se não
+houver sobreposição em nenhum dia, com folga mínima (padrão 60 min). Veículos: VA01, VA02…
+Abas: Soltura (dia, turno, saída, veículo, placa, circuito…), Frota (placas a preencher —
+aparecem na Soltura por fórmula), Grade semanal, Resumo (veículos por dia/turno) e
+Circuitos. A frota não inclui reserva técnica.
 
 Testes: `python-qgis-ltr.bat tests\test_slu.py` (não precisa do QGIS aberto).
 
