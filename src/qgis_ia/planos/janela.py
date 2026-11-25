@@ -774,6 +774,8 @@ class JanelaPlanos(QDialog):
                 if f.get("valores_permitidos"):
                     vals = f["valores_permitidos"]
                     det += " · valores: " + "; ".join(vals[:6]) + ("…" if len(vals) > 6 else "")
+                if str(f.get("valor_padrao") or "").strip():
+                    det += f" · padrão (sem informação): {f['valor_padrao']}"
                 no(it, f["nome"], det)
 
         for chave, titulo in (("entregaveis", "Entregáveis"), ("insumos", "Insumos"),

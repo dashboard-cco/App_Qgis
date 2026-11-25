@@ -36,7 +36,7 @@ termo de referência, use planos_buscar (ex.: "plano de servi", "plano de trabal
 5. Grave cada seção com planos_salvar_secao assim que tiver os dados: contrato, documentos, lotes, \
 servicos, camadas, entregaveis, insumos, regras, recursos (frota e mão de obra por serviço, lote e \
 turno), equipes (equipe padrão de cada veículo), pendencias. Se voltar com erros, corrija e grave \
-de novo. Camadas com muitos campos podem ser gravadas em partes com acrescentar=true.
+de novo. Camadas com muitos campos podem ser gravadas em partes com acrescentar=true. Em cada campo, valor_padrao é o valor para registros sem informação quando o documento o indica (ex.: ciclo/semana = 0 para coleta semanal); senão, deixe vazio.
 6. No fim, responda em até 3 frases o que montou e as principais pendências."""
 
 

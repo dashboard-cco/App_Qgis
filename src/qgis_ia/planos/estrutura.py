@@ -5,7 +5,8 @@
 - completar_perfil(perfil, estrutura): usa um modelo do contratante (ou um plano já aceito)
   para pôr no perfil os nomes técnicos exatos de camadas e campos, tamanhos e domínios.
 - completar_plano(perfil, caminho, servicos): no plano EXISTENTE, cria só as camadas e os
-  campos que faltam (nada é apagado nem renomeado; antes faz uma cópia de segurança).
+  campos que faltam (nada é apagado nem renomeado; antes faz uma cópia de segurança) e põe o
+  valor padrão do perfil (ex.: ciclo = 0) nos registros vazios.
 
 Sem QGIS (só osgeo): pode ser testado sozinho.
 """
@@ -228,7 +229,8 @@ def completar_perfil(p, estrutura, servicos=None, minimo=0.5):
                            # campo só do modelo (o edital não cita): não é obrigatório preencher
                            "obrigatorio": fp.get("obrigatorio", False),
                            "descricao": fp.get("descricao") or fp.get("nome") or fm["alias"],
-                           "valores_permitidos": valores})
+                           "valores_permitidos": valores,
+                           "valor_padrao": fp.get("valor_padrao", "")})
         # campos que o edital pede e o modelo não tem: ficam, com nome técnico a confirmar
         for f in (antiga or {}).get("campos", []):
             if f in por_modelo.values():
@@ -237,6 +239,7 @@ def completar_perfil(p, estrutura, servicos=None, minimo=0.5):
             extra.setdefault("descricao", f["nome"])
             if not extra.get("descricao"):
                 extra["descricao"] = f["nome"]
+            extra.setdefault("valor_padrao", "")
             campos.append(extra)
         nova = {"nome": cm["nome"], "descricao": (antiga or {}).get("descricao", "") or
                 f"Camada do modelo {nome_modelo}",
@@ -328,7 +331,101 @@ def o_que_falta(p, caminho, servicos=None):
         faltam = [f["nome"] for f in cam["campos"] if norm(f["nome"]) not in tem]
         if faltam:
             falta["campos"][e["nome"]] = faltam
+    falta["vazios"] = vazios_com_padrao(p, caminho, servicos)
     return falta
+
+
+def _campos_com_padrao(p, servicos):
+    """{nome norm da camada: [(campo do perfil, valor)]} dos campos com valor_padrao."""
+    out = {}
+    for cam in camadas_exigidas(p, servicos):
+        cs = [(f, f["valor_padrao"]) for f in cam["campos"]
+              if str(f.get("valor_padrao") or "").strip() != ""]
+        if cs:
+            out[norm(cam["nome"])] = cs
+    return out
+
+
+def _valor_padrao(f, ogr_tipo=None):
+    """Texto do perfil -> valor do tipo do campo ('0' -> 0 em inteiro)."""
+    v = codigo_valor(str(f["valor_padrao"]).strip())
+    _, ogr, _ = _ogr()
+    tipo = ogr_tipo if ogr_tipo is not None else _tipo_campo_ogr(f["tipo"])
+    try:
+        if tipo in (ogr.OFTInteger, ogr.OFTInteger64):
+            return int(float(v.replace(",", ".")))
+        if tipo == ogr.OFTReal:
+            return float(v.replace(",", "."))
+    except ValueError:
+        return None
+    return v
+
+
+def _vazio(feat, idx, tipo, ogr):
+    if not feat.IsFieldSetAndNotNull(idx):
+        return True
+    return tipo == ogr.OFTString and not str(feat.GetField(idx) or "").strip()
+
+
+def _percorrer_vazios(ds, p, servicos, gravar=False):
+    """Conta (e, se gravar, preenche) os registros vazios dos campos com valor padrão.
+    Devolve {camada: {campo: {"valor": v, "registros": n}}}."""
+    _, ogr, _ = _ogr()
+    alvo = _campos_com_padrao(p, servicos)
+    out = {}
+    for i in range(ds.GetLayerCount()):
+        lyr = ds.GetLayerByIndex(i)
+        cs = alvo.get(norm(lyr.GetName()))
+        if not cs:
+            continue
+        defn = lyr.GetLayerDefn()
+        nomes = {norm(defn.GetFieldDefn(j).GetName()): j for j in range(defn.GetFieldCount())}
+        campos = []
+        for f, _v in cs:
+            j = nomes.get(norm(f["nome"]))
+            if j is None:
+                continue
+            tipo = defn.GetFieldDefn(j).GetType()
+            val = _valor_padrao(f, tipo)
+            if val is not None:
+                campos.append((defn.GetFieldDefn(j).GetName(), j, tipo, val))
+        if not campos:
+            continue
+        cont = {c[0]: 0 for c in campos}
+        lyr.ResetReading()
+        mudadas = []
+        for feat in lyr:
+            mudou = False
+            for nome, j, tipo, val in campos:
+                if _vazio(feat, j, tipo, ogr):
+                    cont[nome] += 1
+                    if gravar:
+                        feat.SetField(j, val)
+                        mudou = True
+            if mudou:
+                mudadas.append(feat)
+        if gravar and mudadas:
+            lyr.StartTransaction() if lyr.TestCapability(ogr.OLCTransactions) else None
+            for feat in mudadas:
+                lyr.SetFeature(feat)
+            lyr.CommitTransaction() if lyr.TestCapability(ogr.OLCTransactions) else None
+        res = {nome: {"valor": val, "registros": cont[nome]}
+               for nome, _j, _t, val in campos if cont[nome]}
+        if res:
+            out[lyr.GetName()] = res
+    return out
+
+
+@com_excecoes
+def vazios_com_padrao(p, caminho, servicos=None):
+    """Sem gravar: registros vazios em campos que têm valor padrão no perfil."""
+    servicos = servicos if servicos is not None else servicos_do_arquivo(p, caminho)
+    if not _campos_com_padrao(p, servicos):
+        return {}
+    ds = abrir(caminho)
+    if ds is None:
+        raise ValueError(f"Não consegui abrir {caminho}")
+    return _percorrer_vazios(ds, p, servicos)
 
 
 @com_excecoes
@@ -337,8 +434,8 @@ def completar_plano(p, caminho, servicos=None, backup=True):
     gdal, ogr, osr = _ogr()
     falta = o_que_falta(p, caminho, servicos)
     rel = {"plano": caminho, "servicos": falta["servicos"], "backup": None,
-           "camadas_criadas": [], "campos_criados": {}, "avisos": []}
-    if not falta["camadas"] and not falta["campos"]:
+           "camadas_criadas": [], "campos_criados": {}, "preenchidos": {}, "avisos": []}
+    if not falta["camadas"] and not falta["campos"] and not falta["vazios"]:
         return rel
     if backup:
         rel["backup"] = copia_seguranca(caminho)
@@ -367,6 +464,10 @@ def completar_plano(p, caminho, servicos=None, backup=True):
             fd.SetWidth(int(f.get("tamanho") or 255))
         if f.get("descricao") and hasattr(fd, "SetAlternativeName"):
             fd.SetAlternativeName(f["descricao"][:255])
+        if str(f.get("valor_padrao") or "").strip() != "":
+            v = _valor_padrao(f)
+            if v is not None:
+                fd.SetDefault(str(v) if not isinstance(v, str) else "'" + v.replace("'", "''") + "'")
         vals = f.get("valores_permitidos") or []
         if vals and hasattr(ds, "AddFieldDomain"):
             nome_dom = f["nome"] if f["nome"] not in doms else None
@@ -414,5 +515,9 @@ def completar_plano(p, caminho, servicos=None, backup=True):
                 rel["campos_criados"].setdefault(nome_lyr, []).append(nf)
             except Exception as e:
                 rel["avisos"].append(f"{nome_lyr}.{nf}: {e}")
+    try:
+        rel["preenchidos"] = _percorrer_vazios(ds, p, falta["servicos"], gravar=True)
+    except Exception as e:
+        rel["avisos"].append(f"valor padrão: {e}")
     ds = None
     return rel

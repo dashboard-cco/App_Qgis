@@ -146,6 +146,11 @@ def planos_salvar_secao(secao, dados, acrescentar=False):
             dados = json.loads(dados)
         except ValueError:
             raise ValueError("'dados' deve ser JSON (objeto ou lista).")
+    if secao == "camadas" and isinstance(dados, list):  # valor_padrao é opcional na prática
+        for cam in dados:
+            for f in (cam.get("campos") or []) if isinstance(cam, dict) else []:
+                if isinstance(f, dict):
+                    f.setdefault("valor_padrao", "")
     erros = perfil.valida(dados, perfil.ESQUEMA["properties"][secao], secao)
     if erros:
         return {"ok": False, "gravado": False, "erros": erros[:40],

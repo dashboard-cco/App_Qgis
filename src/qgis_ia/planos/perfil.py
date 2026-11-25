@@ -90,6 +90,9 @@ ESQUEMA = _obj({
             "obrigatorio": _B,
             "descricao": _S,
             "valores_permitidos": _lista(_S, "valores/domínio, ex.: ['0 - Fim', '1 - Início']; vazio se livre"),
+            "valor_padrao": {"type": "string",
+                             "description": "valor para os registros sem informação (ex.: '0' em ciclo quando "
+                                            "a coleta é semanal); vazio se não houver"},
         })),
         "fonte": _FONTE,
     }), "camadas/tabelas que o plano entregue precisa ter"),
@@ -201,6 +204,7 @@ def normaliza(p):
     for cam in out.get("camadas") or []:
         for f in cam.get("campos") or []:
             f.setdefault("tamanho", 0)
+            f.setdefault("valor_padrao", "")
     return out
 
 
@@ -321,7 +325,8 @@ def perfil_slu_df():
                             for k, v in doms[f["dominio"]].items()]
                 campos.append({"nome": f["nome"], "tipo": _TIPO.get(f["tipo"], "texto"),
                                "tamanho": f["tamanho"] or 0, "obrigatorio": True, "descricao": f["apelido"] or "",
-                               "valores_permitidos": vals})
+                               "valores_permitidos": vals,
+                               "valor_padrao": _PADRAO_SLU.get(f["nome"], "")})
             camadas[chave] = {"nome": c["nome"], "descricao": f"Camada do grupo {grupo}",
                               "geometria": _GEOM.get(c["geometria"], "tabela"),
                               "servicos": list(servs), "campos": campos,
@@ -380,6 +385,9 @@ def perfil_slu_df():
     p["_meta"]["origem"] = "perfil pronto SLU-DF (edital_slu.py)"
     return p
 
+
+# Ciclo/semana só valem para circuitos quinzenais/mensais; os semanais ficam 0 ("Padrão").
+_PADRAO_SLU = {"ciclo": "0", "flag_semana": "0"}
 
 # Anexo R: motoristas e coletores (diurno, noturno) de P1 (+P1A, cujos compactadores c/ munk
 # estão na frota do P1) e de P2, por lote (págs. 1-3, 9-10, 17-18).

@@ -120,6 +120,10 @@ try:
     rel = S.completar_plano(p, plano)
     check(rel["backup"] and os.path.isdir(rel["backup"]), "backup feito")
     check(rel["campos_criados"] == {"lm_area_circuito_planejado": ["ciclo", "flag_semana"]}, f"{rel}")
+    # ciclo/semana só valem para coleta quinzenal/mensal: os semanais ficam 0 (valor padrão)
+    check(rel["preenchidos"] == {"lm_area_circuito_planejado": {
+        "ciclo": {"valor": 0, "registros": area["feicoes"]},
+        "flag_semana": {"valor": 0, "registros": area["feicoes"]}}}, f"preenchidos {rel['preenchidos']}")
     est2 = S.ler(plano)
     a2 = next(c for c in est2["camadas"] if c["nome"] == "lm_area_circuito_planejado")
     ciclo = next(f for f in a2["campos"] if f["nome"] == "ciclo")
@@ -128,8 +132,25 @@ try:
     check(S.o_que_falta(p, plano)["campos"] == {}, "nada mais falta")
     check(S.completar_plano(p, plano)["backup"] is None, "sem backup quando nada a fazer")
     r2 = V.validar(p, plano)
-    vazios = {g["campo"]: g["quantidade"] for g in r2["erros"] if g["regra"] == "obrigatorio_vazio"}
-    check(vazios == {"ciclo": area["feicoes"], "flag_semana": area["feicoes"]}, f"vazios {vazios}")
+    check(r2["resumo"]["aprovado"] and not r2["erros"], f"validação depois de criar {r2['resumo']}")
+    from osgeo import ogr
+    ds = ogr.Open(plano, 1)
+    lyr = ds.GetLayerByName("lm_area_circuito_planejado")
+    check({(f.GetField("ciclo"), f.GetField("flag_semana")) for f in lyr} == {(0, 0)}, "ciclo/semana 0")
+    lyr.ResetReading()
+    ft = lyr.GetNextFeature()
+    ft.SetFieldNull("flag_semana")
+    lyr.SetFeature(ft)
+    ds = None
+    vz = S.o_que_falta(p, plano)["vazios"]
+    check(vz == {"lm_area_circuito_planejado": {"flag_semana": {"valor": 0, "registros": 1}}}, f"vazio {vz}")
+    rel = S.completar_plano(p, plano, backup=False)
+    check(rel["preenchidos"] and not S.vazios_com_padrao(p, plano), "preencheu o vazio")
+    sem = perfil.perfil_slu_df()
+    for c in sem["camadas"]:
+        for f in c["campos"]:
+            f["valor_padrao"] = ""
+    check(S.vazios_com_padrao(sem, plano) == {}, "sem valor padrão no perfil, nada a preencher")
 
     # camada inteira faltando: remove st_conteiner da cópia e recria
     from osgeo import ogr
@@ -190,13 +211,22 @@ try:
     check(jan.aba_plano.cb.currentText() == plano2, "plano na lista")
     textos = [jan.aba_plano.arv.topLevelItem(i).text(0)
               for i in range(jan.aba_plano.arv.topLevelItemCount())]
-    check(textos == ["🟡 lm_area_circuito_planejado"], f"o que falta na aba: {textos}")
+    check(textos == ["🟡 lm_area_circuito_planejado", "   ↳ ciclo", "   ↳ flag_semana"],
+          f"o que falta na aba: {textos}")
     with mock.patch.object(J.QMessageBox, "question", return_value=J.QMessageBox.StandardButton.Yes), \
             mock.patch("planos.abas_plano.QMessageBox.question",
                        return_value=J.QMessageBox.StandardButton.Yes), \
             mock.patch("planos.abas_plano.QMessageBox.information"):
         jan.aba_plano._criar()
     check("Estrutura completa" in jan.aba_plano.lb.text(), jan.aba_plano.lb.text())
+    check(not V.validar(jan.perfil, plano2)["erros"], "plano2 aprovado depois de criar")
+    ds = ogr.Open(plano2, 1)  # esvazia ciclo/semana para testar a árvore da validação
+    lyr = ds.GetLayerByName("lm_area_circuito_planejado")
+    for ft in lyr:
+        ft.SetFieldNull("ciclo")
+        ft.SetFieldNull("flag_semana")
+        lyr.SetFeature(ft)
+    ds = None
     jan.aba_validar.atualizar()
     jan.aba_validar.resultado = V.validar(jan.perfil, plano2)
     jan.aba_validar._mostrar()

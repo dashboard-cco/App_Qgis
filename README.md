@@ -21,7 +21,9 @@ contrato pede, a partir do edital e das especificações técnicas:
 4. **Plano** — *Completar perfil com modelo*: lê os .gdb/.gpkg modelo do contratante (ou um
    plano já aceito) e põe no perfil os nomes técnicos de camadas e campos, tamanhos e domínios.
    *Plano existente*: mostra o que falta no seu plano e **cria só o que falta** (camadas e
-   campos com domínio), sem apagar nada e com cópia de segurança.
+   campos com domínio), sem apagar nada e com cópia de segurança. Campos com **valor padrão**
+   no perfil recebem esse valor nos registros vazios (ex.: `ciclo` e `flag_semana` = 0, pois só
+   valem para coleta quinzenal/mensal e os circuitos semanais ficam zerados).
 5. **Frota e equipe** — adequa o plano já feito à frota e ao pessoal do edital novo (seções
    *recursos* e *equipes* do perfil). Compara veículos (pico por dia e turno) e pessoal
    (veículos × equipe padrão) com o edital e propõe como caber: troca o equipamento que o

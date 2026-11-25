@@ -10,6 +10,7 @@ from qgis.PyQt.QtWidgets import (QComboBox, QFileDialog, QHBoxLayout, QHeaderVie
                                  QVBoxLayout, QWidget)
 
 from . import estrutura, perfil, validacao
+from .checklist import norm
 
 _PAPEL = Qt.ItemDataRole.UserRole
 
@@ -166,7 +167,20 @@ class AbaPlano(QWidget):
             for c in campos:
                 QTreeWidgetItem(it, [c, ""])
             it.setExpanded(True)
-        n = len(falta["camadas"]) + sum(len(v) for v in falta["campos"].values())
+        criar = {(norm(c), norm(f)) for c, fs in falta["campos"].items() for f in fs}
+        for camada, campos in (falta.get("vazios") or {}).items():
+            it = QTreeWidgetItem(self.arv, [f"🟡 {camada}", "registros vazios → valor padrão"])
+            for c, d in campos.items():
+                QTreeWidgetItem(it, [c, f"{d['registros']} vazio(s) → {d['valor']}"])
+            it.setExpanded(True)
+        for camada, campos in falta["campos"].items():  # campo novo: todos recebem o padrão
+            cam = next((c for c in estrutura.camadas_exigidas(self.j.perfil, srv)
+                        if norm(c["nome"]) == norm(camada)), None)
+            for f in (cam or {}).get("campos", []):
+                if (norm(camada), norm(f["nome"])) in criar and str(f.get("valor_padrao") or "").strip():
+                    QTreeWidgetItem(self.arv, [f"   ↳ {f['nome']}",
+                                               f"será criado com {f['valor_padrao']} em todos"])
+        n = len(falta["camadas"]) + sum(len(v) for v in falta["campos"].values()) +             sum(len(v) for v in (falta.get("vazios") or {}).values())
         escopo = ", ".join(srv) if srv else "todos os serviços (marque na aba 2)"
         self.lb.setText(f"Serviços: {escopo}. " +
                         ("✅ Estrutura completa." if n == 0 else f"Faltam {n} item(ns)."))
@@ -177,7 +191,8 @@ class AbaPlano(QWidget):
         if not p:
             return
         if QMessageBox.question(self, "Criar o que falta",
-                                f"Criar as camadas e campos que faltam em\n{p}?\n\n"
+                                f"Criar as camadas e campos que faltam e pôr o valor padrão "
+                                f"nos registros vazios em\n{p}?\n\n"
                                 "Antes será feita uma cópia de segurança ao lado do arquivo.") \
                 != QMessageBox.StandardButton.Yes:
             return
@@ -197,6 +212,9 @@ class AbaPlano(QWidget):
             partes.append("Camadas criadas: " + ", ".join(rel["camadas_criadas"]))
         for c, cs in rel["campos_criados"].items():
             partes.append(f"{c}: " + ", ".join(cs))
+        for c, cs in (rel.get("preenchidos") or {}).items():
+            partes.append(f"{c}: " + ", ".join(f"{k} = {d['valor']} em {d['registros']} registro(s)"
+                                               for k, d in cs.items()))
         if rel["backup"]:
             partes.append(f"Cópia de segurança: {rel['backup']}")
         if rel["avisos"]:

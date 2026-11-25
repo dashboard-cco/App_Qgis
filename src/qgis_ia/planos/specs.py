@@ -80,6 +80,7 @@ SPECS = {
               "aplicar": {"type": "boolean", "description": "gravar numa cópia do plano"},
               "saida": _s("opcional: caminho da cópia")}, ["plano"])),
     "planos_o_que_falta": (
-        "Camadas e campos que o perfil exige e que o plano existente ainda não tem.",
+        "Camadas e campos que o perfil exige e que o plano existente ainda não tem, e registros "
+        "vazios em campos com valor padrão no perfil (ex.: ciclo = 0).",
         _obj({"plano": _s("caminho do .gdb/.gpkg do plano")}, ["plano"])),
 }
