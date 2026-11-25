@@ -84,6 +84,7 @@ ESQUEMA = _obj({
         "campos": _lista(_obj({
             "nome": {"type": "string", "description": "nome exato do campo"},
             "tipo": {"type": "string", "enum": TIPOS_CAMPO},
+            "tamanho": {"type": "integer", "description": "tamanho máximo de texto; 0 se não informado"},
             "obrigatorio": _B,
             "descricao": _S,
             "valores_permitidos": _lista(_S, "valores/domínio, ex.: ['0 - Fim', '1 - Início']; vazio se livre"),
@@ -149,6 +150,8 @@ def valida(dado, esq=None, caminho=""):
             erros.append(f"{caminho}: '{dado}' não é um de {esq['enum']}")
     elif t == "boolean" and not isinstance(dado, bool):
         erros.append(f"{caminho}: deve ser true/false")
+    elif t == "integer" and (isinstance(dado, bool) or not isinstance(dado, int)):
+        erros.append(f"{caminho}: deve ser número inteiro")
     return erros
 
 
@@ -173,7 +176,31 @@ def normaliza(p):
             out[k] = v
     for k, v in base["contrato"].items():
         out["contrato"].setdefault(k, v)
+    for cam in out.get("camadas") or []:
+        for f in cam.get("campos") or []:
+            f.setdefault("tamanho", 0)
     return out
+
+
+def codigo_valor(v):
+    """'0 - Fim' -> '0'; 'CC01' -> 'CC01' (código de um valor permitido)."""
+    import re
+    m = re.match(r"^\s*(.+?)\s+[-–]\s+\S", str(v))
+    return (m.group(1) if m else str(v)).strip()
+
+
+def epsg(p):
+    """Código EPSG exigido pelo contrato (ou None)."""
+    import re
+    s = (p.get("contrato") or {}).get("sistema_referencia", "") or ""
+    m = re.search(r"EPSG\D{0,3}(\d{4,6})", s, re.IGNORECASE)
+    if m:
+        return int(m.group(1))
+    m = re.search(r"SIRGAS\s*2000.*?UTM.*?(\d{2})\s*([NS])", s, re.IGNORECASE)
+    if m:
+        z, h = int(m.group(1)), m.group(2).upper()
+        return 31960 + z if h == "S" else None  # SIRGAS 2000 / UTM 18S-25S = 31978-31985
+    return None
 
 
 def salvar(p, caminho):
@@ -266,7 +293,7 @@ def perfil_slu_df():
                     vals = [f"{k} - {v}" if str(k) != str(v) else str(v)
                             for k, v in doms[f["dominio"]][2].items()]
                 campos.append({"nome": f["nome"], "tipo": _TIPO.get(f["tipo"], "texto"),
-                               "obrigatorio": True, "descricao": f["apelido"] or "",
+                               "tamanho": f["tamanho"] or 0, "obrigatorio": True, "descricao": f["apelido"] or "",
                                "valores_permitidos": vals})
             camadas[chave] = {"nome": c["nome"], "descricao": f"Camada do grupo {grupo}",
                               "geometria": _GEOM.get(c["geometria"], "tabela"),

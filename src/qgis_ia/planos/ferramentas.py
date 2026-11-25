@@ -176,7 +176,34 @@ def planos_checklist():
                       for i in itens]}
 
 
+def planos_validar(plano):
+    """Valida um plano (.gdb/.gpkg) contra o perfil; resumo e problemas agrupados."""
+    from . import estrutura, validacao
+    pasta = _pasta()
+    p = _perfil(pasta)
+    if p is None:
+        raise RuntimeError("Ainda não há perfil do contrato.")
+    srv = estrutura.servicos_do_arquivo(p, plano) or _estado(pasta).get("servicos", [])
+    r = validacao.validar(p, plano, srv, max_fids=20)
+    return {"plano": r["plano"], "servicos": r["servicos"], "resumo": r["resumo"],
+            "problemas": [{k: g[k] for k in ("severidade", "camada", "campo", "regra", "mensagem",
+                                             "quantidade")} for g in r["erros"][:80]]}
+
+
+def planos_o_que_falta(plano):
+    """Camadas e campos que o perfil exige e o plano existente não tem."""
+    from . import estrutura
+    pasta = _pasta()
+    p = _perfil(pasta)
+    if p is None:
+        raise RuntimeError("Ainda não há perfil do contrato.")
+    srv = estrutura.servicos_do_arquivo(p, plano) or _estado(pasta).get("servicos", [])
+    return estrutura.o_que_falta(p, plano, srv)
+
+
 TOOLS = {
+    "planos_validar": planos_validar,
+    "planos_o_que_falta": planos_o_que_falta,
     "planos_situacao": planos_situacao,
     "planos_indice": planos_indice,
     "planos_ler_paginas": planos_ler_paginas,

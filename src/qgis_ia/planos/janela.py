@@ -261,14 +261,12 @@ class JanelaPlanos(QDialog):
         self.abas.addTab(self._aba_documentos(), "1. Documentos")
         self.abas.addTab(self._aba_requisitos(), "2. Requisitos")
         self.abas.addTab(self._aba_checklist(), "3. O que falta")
-        self.abas.addTab(self._aba_futura("Gerar o plano",
-                                          "Gera os arquivos do plano (.gdb, planilhas, texto) seguindo "
-                                          "o perfil do contrato. Em desenvolvimento (Fase 2)."),
-                         "4. Gerar")
-        self.abas.addTab(self._aba_futura("Validar o plano",
-                                          "Confere o plano gerado contra o perfil e mostra os erros no "
-                                          "mapa. Em desenvolvimento (Fase 2)."), "5. Validar")
-        self.abas.currentChanged.connect(lambda i: i == 2 and self._atualizar_checklist())
+        from .abas_plano import AbaPlano, AbaValidar
+        self.aba_plano = AbaPlano(self)
+        self.aba_validar = AbaValidar(self)
+        self.abas.addTab(self.aba_plano, "4. Plano")
+        self.abas.addTab(self.aba_validar, "5. Validar")
+        self.abas.currentChanged.connect(self._aba_mudou)
 
         rod = QHBoxLayout()
         self.lb_status = QLabel("")
@@ -357,6 +355,14 @@ class JanelaPlanos(QDialog):
         lay.addLayout(bts)
         return w
 
+    def _aba_mudou(self, i):
+        if i == 2:
+            self._atualizar_checklist()
+        elif i == 3:
+            self.aba_plano.atualizar()
+        elif i == 4:
+            self.aba_validar.atualizar()
+
     def _aba_futura(self, titulo, texto):
         w = QWidget()
         lay = QVBoxLayout(w)
@@ -388,7 +394,7 @@ class JanelaPlanos(QDialog):
         self.ed_pasta.setText(self.pasta)
         QgsSettings().setValue(CFG_PASTA, self.pasta)
         QgsProject.instance().writeEntry("qgis_ia", "pasta_contrato", self.pasta)
-        self.estado = {"documentos": [], "servicos": [], "manuais": {}}
+        self.estado = {"documentos": [], "servicos": [], "manuais": {}, "planos": []}
         arq = os.path.join(self.pasta, ARQ_ESTADO)
         if os.path.exists(arq):
             try:
@@ -407,6 +413,8 @@ class JanelaPlanos(QDialog):
         self._mostrar_docs()
         self._ler_docs_em_segundo_plano()
         self._mostrar_perfil()
+        self.aba_plano.atualizar()
+        self.aba_validar.atualizar()
 
     def _salvar_estado(self):
         os.makedirs(self.pasta, exist_ok=True)

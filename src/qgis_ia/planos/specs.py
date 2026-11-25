@@ -57,4 +57,11 @@ SPECS = {
         "Checklist do que falta para gerar o plano: compara o perfil com as camadas do "
         "projeto (tem / incompleto / falta / confirmar).",
         _obj()),
+    "planos_validar": (
+        "Valida um plano (.gdb, .gpkg) contra o perfil do contrato: camadas, geometria, "
+        "sistema, campos, tipos, obrigatórios, domínios e geometrias inválidas.",
+        _obj({"plano": _s("caminho do .gdb/.gpkg do plano")}, ["plano"])),
+    "planos_o_que_falta": (
+        "Camadas e campos que o perfil exige e que o plano existente ainda não tem.",
+        _obj({"plano": _s("caminho do .gdb/.gpkg do plano")}, ["plano"])),
 }

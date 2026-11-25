@@ -18,11 +18,20 @@ contrato pede, a partir do edital e das especificações técnicas:
    documento e página. Também há perfis prontos (SLU-DF 90005/2026).
 3. **O que falta** — checklist que compara o perfil com o projeto aberto: 🟢 tem,
    🟡 incompleto, 🔴 falta, ⚪ confirmar.
-4. **Gerar** e 5. **Validar** — Fase 2.
+4. **Plano** — *Completar perfil com modelo*: lê os .gdb/.gpkg modelo do contratante (ou um
+   plano já aceito) e põe no perfil os nomes técnicos de camadas e campos, tamanhos e domínios.
+   *Plano existente*: mostra o que falta no seu plano e **cria só o que falta** (camadas e
+   campos com domínio), sem apagar nada e com cópia de segurança.
+5. **Validar** — confere o plano contra o perfil: camadas, geometria, sistema, campos, tipos,
+   tamanhos, obrigatórios vazios, valores fora do domínio e geometrias inválidas. Clique duplo
+   seleciona as feições no mapa; relatório em .xlsx.
 
-Precisa de uma conta da IA (Anthropic). Na primeira vez que o QGIS abre numa máquina nova, o
-app pede a chave, testa (chave, modelo e crédito) e grava em `ANTHROPIC_API_KEY` do usuário.
-Código em [src/qgis_ia/planos/](src/qgis_ia/planos/).
+A leitura usa a **conta Claude da máquina** (Claude Code logado em claude.ai), ligada ao QGIS
+por MCP (ferramentas `planos_*`); a chave de API é só alternativa.
+
+Na primeira vez que o QGIS abre numa máquina nova, o app verifica a conta Claude (Claude Code
+instalado e logado) e ajuda no login; sem ela, aceita uma chave de API (testa chave, modelo e
+crédito). Código em [src/qgis_ia/planos/](src/qgis_ia/planos/).
 
 ## Versões
 
@@ -51,4 +60,5 @@ No QGIS: *Complementos → Gerenciar e instalar complementos → Instalar a part
 "C:\Program Files\QGIS 3.44.15\bin\python-qgis-ltr.bat" tests\test_redesenho.py
 "C:\Program Files\QGIS 3.44.15\bin\python-qgis-ltr.bat" tests\test_soltura.py
 "C:\Program Files\QGIS 3.44.15\bin\python-qgis-ltr.bat" tests\test_planos.py
+"C:\Program Files\QGIS 3.44.15\bin\python-qgis-ltr.bat" tests\test_planos_fase2.py
 ```
