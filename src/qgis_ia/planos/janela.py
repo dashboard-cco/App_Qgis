@@ -8,14 +8,15 @@ import os
 
 from qgis.core import (QgsApplication, QgsProject, QgsProviderRegistry, QgsSettings, QgsTask,
                        QgsVectorLayer, QgsWkbTypes, QgsFeatureRequest)
-from qgis.PyQt.QtCore import QObject, Qt, QTimer, QUrl, pyqtSignal
+from qgis.PyQt.QtCore import (QObject, QProcess, QProcessEnvironment, Qt, QTimer, QUrl,
+                              pyqtSignal)
 from qgis.PyQt.QtGui import QDesktopServices, QFont
 from qgis.PyQt.QtWidgets import (QComboBox, QDialog, QFileDialog, QHBoxLayout, QHeaderView,
                                  QLabel, QLineEdit, QListWidget, QListWidgetItem, QMessageBox,
                                  QPushButton, QTabWidget, QTreeWidget, QTreeWidgetItem,
                                  QVBoxLayout, QWidget)
 
-from . import checklist, config_ia, documentos, extracao, perfil
+from . import checklist, config_ia, documentos, extracao, ferramentas, leitor_claude, perfil
 
 ARQ_PERFIL = "contrato.json"
 ARQ_ESTADO = "estado.json"
@@ -34,22 +35,38 @@ _MARCADO, _DESMARCADO = Qt.CheckState.Checked, Qt.CheckState.Unchecked
 
 # ====================================================================== conta da IA
 class ConfigIADialog(QDialog):
-    """Primeiro uso: pede a chave da conta da IA, testa e grava."""
+    """Primeiro uso: confere a conta Claude da máquina (Claude Code) ou pede uma chave de API."""
 
     def __init__(self, parent=None, primeira_vez=False):
         super().__init__(parent)
         self.setWindowTitle("Configurar IA")
-        self.setMinimumWidth(520)
+        self.setMinimumWidth(560)
         lay = QVBoxLayout(self)
-        intro = ("<b>Bem-vindo!</b> O app usa uma conta da IA (Claude, da Anthropic) para ler "
-                 "editais e especificações.<br><br>" if primeira_vez else "")
-        info = QLabel(intro +
-                      "1. Entre em <a href='%s'>console.anthropic.com</a> com a conta da empresa.<br>"
-                      "2. Crie uma chave (<i>Create Key</i>) e copie.<br>"
-                      "3. Cole abaixo e clique em <b>Testar e salvar</b>.<br><br>"
-                      "<small>A chave fica só neste computador (variável ANTHROPIC_API_KEY do "
-                      "usuário). Ler um edital completo custa cerca de US$ 1 a 3.</small>"
-                      % config_ia.URL_CONSOLE)
+        intro = ("<b>Bem-vindo!</b> O app usa o Claude para ler editais e especificações.<br><br>"
+                 if primeira_vez else "")
+        topo = QLabel(intro + "<b>1. Conta Claude desta máquina (recomendado)</b><br>"
+                      "Usa a sua assinatura do Claude (claude.ai) pelo Claude Code, ligado ao "
+                      "QGIS por MCP. Não precisa de chave nem de créditos da API.")
+        topo.setWordWrap(True)
+        lay.addWidget(topo)
+        self.lb_claude = QLabel("Verificando…")
+        self.lb_claude.setWordWrap(True)
+        self.lb_claude.setOpenExternalLinks(True)
+        lay.addWidget(self.lb_claude)
+        linha = QHBoxLayout()
+        self.bt_login = QPushButton("Fazer login no Claude")
+        self.bt_login.clicked.connect(self._login)
+        self.bt_verificar = QPushButton("Verificar de novo")
+        self.bt_verificar.clicked.connect(self._verificar_claude)
+        linha.addWidget(self.bt_login)
+        linha.addWidget(self.bt_verificar)
+        linha.addStretch()
+        lay.addLayout(linha)
+
+        info = QLabel("<br><b>2. Ou chave de API da Anthropic (alternativa)</b><br>"
+                      "Crie em <a href='%s'>console.anthropic.com</a>, cole abaixo e clique em "
+                      "<b>Testar e salvar</b>. Cobra por uso (um edital ≈ US$ 1 a 3) e precisa "
+                      "de créditos na conta." % config_ia.URL_CONSOLE)
         info.setOpenExternalLinks(True)
         info.setWordWrap(True)
         lay.addWidget(info)
@@ -65,19 +82,59 @@ class ConfigIADialog(QDialog):
         lay.addWidget(self.status)
         bts = QHBoxLayout()
         bts.addStretch()
-        self.bt_depois = QPushButton("Agora não")
-        self.bt_ok = QPushButton("Testar e salvar")
-        self.bt_ok.setDefault(True)
+        self.bt_depois = QPushButton("Fechar")
+        self.bt_ok = QPushButton("Testar e salvar chave")
         bts.addWidget(self.bt_depois)
         bts.addWidget(self.bt_ok)
         lay.addLayout(bts)
-        self.bt_depois.clicked.connect(self.reject)
+        self.bt_depois.clicked.connect(self._fechar)
         self.bt_ok.clicked.connect(self._salvar)
+        QTimer.singleShot(50, self._verificar_claude)
+
+    def _fechar(self):
+        if config_ia.configurada():
+            self.accept()
+        else:
+            self.reject()
+
+    def _verificar_claude(self):
+        self.lb_claude.setText("Verificando…")
+        QApplicationProcess()
+        c = config_ia.claude_code(atualizar=True)
+        if c["ok"]:
+            self.lb_claude.setText(f"<span style='color:#080'>✅ {c['mensagem']}</span>")
+            self.bt_login.setVisible(False)
+        elif c["exe"]:
+            self.lb_claude.setText(f"<span style='color:#c60'>⚠ {c['mensagem']}</span> Clique em "
+                                   "<b>Fazer login no Claude</b> e entre com a conta da empresa.")
+            self.bt_login.setVisible(True)
+        else:
+            self.lb_claude.setText(
+                "<span style='color:#c00'>✖ Claude Code não encontrado.</span> Instale em "
+                "<a href='https://claude.com/claude-code'>claude.com/claude-code</a> "
+                "(ou a extensão Claude Code do VS Code) e clique em Verificar de novo.")
+            self.bt_login.setVisible(False)
+
+    def _login(self):
+        """Abre um terminal com 'claude auth login' (o login abre o navegador)."""
+        import subprocess
+        exe = config_ia.claude_code()["exe"]
+        if not exe:
+            return
+        from .leitor_claude import ambiente
+        if os.name == "nt":
+            subprocess.Popen(["cmd", "/c", "start", "Login Claude", "cmd", "/k", exe, "auth", "login"],
+                             env=ambiente())
+        else:
+            subprocess.Popen([exe, "auth", "login"], env=ambiente())
+        QMessageBox.information(self, "Login no Claude",
+                                "Conclua o login no terminal/navegador que abriu e depois clique "
+                                "em Verificar de novo.")
 
     def _salvar(self):
         k = self.campo.text().strip() or config_ia.chave()
         if not k:
-            self.status.setText("Cole a chave da conta.")
+            self.status.setText("Cole a chave de API.")
             return
         self.status.setText("Testando...")
         QApplicationProcess()
@@ -98,7 +155,7 @@ def QApplicationProcess():
 
 def pedir_configuracao_inicial(parent):
     """Chamado ao abrir o QGIS: se não há conta configurada, abre o assistente uma vez."""
-    if config_ia.configurada() or QgsSettings().value(CFG_ADIADO, False, type=bool):
+    if QgsSettings().value(CFG_ADIADO, False, type=bool) or config_ia.configurada():
         return
     dlg = ConfigIADialog(parent, primeira_vez=True)
     if dlg.exec() != QDialog.DialogCode.Accepted:
@@ -155,9 +212,14 @@ def contar_preenchidos(id_camada, campos, limite=200_000):
 
 # ====================================================================== janela
 class JanelaPlanos(QDialog):
-    def __init__(self, iface, parent=None):
+    def __init__(self, iface, servidor_mcp=None, parent=None):
         super().__init__(parent or iface.mainWindow())
         self.iface = iface
+        self.servidor_mcp = servidor_mcp      # função que devolve o McpSocketServer do plugin
+        self._processo = None
+        self._arq_mcp = None
+        self._buf = b""
+        self._fim_info = None
         self.setWindowTitle("Planos do Contrato")
         self.setWindowFlags(self.windowFlags() | Qt.WindowType.WindowMinMaxButtonsHint)
         self.resize(1000, 680)
@@ -169,6 +231,10 @@ class JanelaPlanos(QDialog):
         self._sinal.msg.connect(self._progresso)
         self._montar()
         self._abrir_pasta(self._pasta_inicial())
+        ferramentas.JANELA = self
+        self._timer_perfil = QTimer(self)
+        self._timer_perfil.setSingleShot(True)
+        self._timer_perfil.timeout.connect(self._recarregar_perfil_silencioso)
         QgsProject.instance().layersAdded.connect(self._agendar_checklist)
         QgsProject.instance().layersRemoved.connect(self._agendar_checklist)
 
@@ -351,15 +417,18 @@ class JanelaPlanos(QDialog):
         perfil.salvar(self.perfil, os.path.join(self.pasta, ARQ_PERFIL))
 
     # ------------------------------------------------------------ IA
-    def _mostrar_ia(self):
-        if config_ia.configurada():
-            self.lb_ia.setText("IA: <span style='color:#080'>configurada</span>")
+    def _mostrar_ia(self, atualizar=False):
+        m = config_ia.motor(atualizar)
+        if m == "claude":
+            self.lb_ia.setText("IA: <span style='color:#080'>conta Claude (MCP)</span>")
+        elif m == "api":
+            self.lb_ia.setText("IA: <span style='color:#080'>chave de API</span>")
         else:
             self.lb_ia.setText("IA: <span style='color:#c00'>não configurada</span>")
 
     def _configurar_ia(self):
         ConfigIADialog(self).exec()
-        self._mostrar_ia()
+        self._mostrar_ia(atualizar=True)
 
     # ------------------------------------------------------------ documentos
     def _mostrar_docs(self):
@@ -464,6 +533,9 @@ class JanelaPlanos(QDialog):
             self._ler_docs_em_segundo_plano(depois=self._ler_com_ia)
             return
         docs = [self.docs_lidos[c] for c in self.estado["documentos"] if c in self.docs_lidos]
+        if config_ia.motor() == "claude":
+            self._ler_com_claude(docs)
+            return
         tokens, custo = extracao.estimativa(docs)
         aviso = ""
         if self.perfil:
@@ -503,6 +575,112 @@ class JanelaPlanos(QDialog):
             self._status(f"Perfil pronto: {perfil.resumo(novo)}. Custo: US$ {info['custo_usd']:.2f}.")
 
         self._rodar(QgsTask.fromFunction("Lendo o edital com IA", trabalho, on_finished=fim))
+
+    # ------------------------------------------------------------ leitura pela conta Claude
+    def _ler_com_claude(self, docs):
+        tokens = documentos.tokens_estimados(docs)
+        aviso = ("\n\nO perfil atual (contrato.json) será substituído; uma cópia fica em "
+                 "contrato_anterior.json.") if self.perfil else ""
+        r = QMessageBox.question(
+            self, "Ler com IA",
+            f"O Claude (sua conta claude.ai, pelo Claude Code) vai ler {len(docs)} documento(s) "
+            f"(~{tokens // 1000} mil tokens) pelo MCP do QGIS e montar o perfil do contrato.\n"
+            f"Usa o limite da sua assinatura, não créditos da API. Leva de 5 a 20 minutos.{aviso}"
+            "\n\nContinuar?")
+        if r != QMessageBox.StandardButton.Yes:
+            return
+        srv = self.servidor_mcp() if self.servidor_mcp else None
+        if srv is None or not (srv.is_running() or srv.start()):
+            QMessageBox.warning(self, "Ler com IA", "Não consegui iniciar o servidor MCP do QGIS_IA.")
+            return
+        if srv.read_only:
+            QMessageBox.warning(self, "Ler com IA", "O servidor MCP está em modo somente leitura; "
+                                "desligue esse modo no painel QGIS_IA para o Claude gravar o perfil.")
+            return
+        exe = config_ia.claude_code()["exe"]
+        os.makedirs(self.pasta, exist_ok=True)
+        self._arq_mcp = os.path.join(self.pasta, ".mcp_planos.json")
+        with open(self._arq_mcp, "w", encoding="utf-8") as f:
+            json.dump(leitor_claude.config_mcp(srv.python_path(), srv.bridge_path(), "127.0.0.1",
+                                               srv.port, srv.token), f)
+        proc = QProcess(self)
+        env = QProcessEnvironment.systemEnvironment()
+        for k in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"):
+            env.remove(k)
+        proc.setProcessEnvironment(env)
+        proc.setWorkingDirectory(self.pasta)
+        proc.readyReadStandardOutput.connect(self._saida_claude)
+        proc.finished.connect(self._fim_claude)
+        proc.errorOccurred.connect(self._erro_claude)
+        self._processo = proc
+        self._buf = b""
+        self._fim_info = None
+        self._ocupado(True)
+        self._status("Iniciando o Claude…")
+        args = leitor_claude.argumentos(self._arq_mcp)
+        if exe.lower().endswith((".cmd", ".bat")):      # instalação via npm
+            exe, args = "cmd", ["/c", exe] + args
+        proc.start(exe, args)
+
+    def _saida_claude(self):
+        if not self._processo:
+            return
+        self._buf += bytes(self._processo.readAllStandardOutput())
+        while b"\n" in self._buf:
+            linha, self._buf = self._buf.split(b"\n", 1)
+            ev = leitor_claude.interpretar(linha.decode("utf-8", "replace"))
+            if not ev:
+                continue
+            if ev["tipo"] == "passo":
+                self._status("Claude: " + ev["texto"] + "…")
+            else:
+                self._fim_info = ev
+
+    def _erro_claude(self, erro):
+        if erro == QProcess.ProcessError.FailedToStart:
+            self._fim_info = {"tipo": "fim", "ok": False,
+                              "texto": "Não consegui abrir o Claude Code. Veja Configurar IA."}
+            self._fim_claude()
+
+    def _fim_claude(self, *_):
+        if not self._processo:
+            return
+        self._saida_claude()
+        erro = bytes(self._processo.readAllStandardError()).decode("utf-8", "replace").strip()
+        self._processo = None
+        self._ocupado(False)
+        if self._arq_mcp and os.path.exists(self._arq_mcp):
+            try:
+                os.remove(self._arq_mcp)      # tem o token do servidor
+            except OSError:
+                pass
+        info = self._fim_info or {"ok": False, "texto": erro[-600:] or "O Claude parou sem resposta."}
+        self._recarregar_perfil_silencioso()
+        if info.get("ok"):
+            self.estado["servicos"] = []
+            self._salvar_estado()
+            self.abas.setCurrentIndex(1)
+            self._status("Perfil montado pelo Claude: "
+                         + (perfil.resumo(self.perfil) if self.perfil else ""))
+            QMessageBox.information(self, "Ler com IA", info["texto"] or "Perfil montado.")
+        else:
+            self._status("A leitura não terminou.")
+            QMessageBox.warning(self, "Ler com IA", info["texto"])
+
+    def perfil_alterado_externamente(self):
+        """O Claude gravou uma seção pelo MCP: atualiza a janela (agrupa gravações seguidas)."""
+        self._timer_perfil.start(400)
+
+    def _recarregar_perfil_silencioso(self):
+        arq = os.path.join(self.pasta, ARQ_PERFIL)
+        if os.path.exists(arq):
+            try:
+                self.perfil = perfil.carregar(arq)
+            except (OSError, ValueError):
+                return
+            self._mostrar_perfil()
+            if self.abas.currentIndex() == 2:
+                self._atualizar_checklist()
 
     def _usar_pronto(self, i):
         if i <= 0:
@@ -699,6 +877,9 @@ class JanelaPlanos(QDialog):
         if self._tarefa:
             self._tarefa.cancel()
             self._status("Cancelando…")
+        if self._processo:
+            self._fim_info = {"tipo": "fim", "ok": False, "texto": "Leitura cancelada."}
+            self._processo.kill()
 
     def _ocupado(self, sim):
         self.bt_ler.setEnabled(not sim)
@@ -714,6 +895,10 @@ class JanelaPlanos(QDialog):
 
     def desligar(self):
         """Chamado ao descarregar o plugin."""
+        if ferramentas.JANELA is self:
+            ferramentas.JANELA = None
+        if self._processo:
+            self._processo.kill()
         try:
             QgsProject.instance().layersAdded.disconnect(self._agendar_checklist)
             QgsProject.instance().layersRemoved.disconnect(self._agendar_checklist)

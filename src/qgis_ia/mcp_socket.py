@@ -19,6 +19,7 @@ from .executor import ACTIONS
 from .actions import (inspection, editing, styling, slu, redesenho, soltura,
                       code as code_actions)
 from . import protocol
+from .planos import ferramentas as planos_ferramentas
 
 DEFAULT_PORT = 9876
 PORT_TRIES = 10
@@ -27,7 +28,8 @@ MAX_BUFFER = 50 * 1024 * 1024
 
 def build_funcs():
     funcs = dict(ACTIONS)
-    for module in (inspection, editing, styling, slu, redesenho, soltura, code_actions):
+    for module in (inspection, editing, styling, slu, redesenho, soltura, code_actions,
+                   planos_ferramentas):
         funcs.update(module.TOOLS)
     return funcs
 

@@ -406,3 +406,10 @@ TOOLS = {
               "return_variable": _s("Nome de uma variável definida pelo código, para devolver o valor")},
              ["code"])),
 }
+
+# App "Planos do Contrato": o Claude lê o edital e monta o perfil do contrato por MCP
+try:
+    from .planos.specs import SPECS as _PLANOS
+except ImportError:
+    from planos.specs import SPECS as _PLANOS
+TOOLS.update(_PLANOS)

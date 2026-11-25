@@ -191,6 +191,51 @@ check(it[0]["status"] == checklist.OK, "pendência resolvida")
 # ------------------------------------------------------------ conta da IA
 check(config_ia.mascarar("sk-ant-api03-abcdefghijklmnop") == "sk-ant-api…mnop", "mascarar")
 
+# ------------------------------------------------------------ validação do perfil
+check(perfil.valida(sem_meta) == [], f"perfil pronto válido: {perfil.valida(sem_meta)[:3]}")
+err = perfil.valida([{"nome": "x", "geometria": "círculo"}],
+                    perfil.ESQUEMA["properties"]["camadas"], "camadas")
+check(any("círculo" in e for e in err) and any("campos: faltando" in e for e in err), f"erros: {err}")
+check(perfil.valida({"titulo": 1}, perfil.ESQUEMA["properties"]["contrato"], "contrato"),
+      "contrato inválido")
+
+# ------------------------------------------------------------ índice e busca
+doc_fake = {"nome": "Edital X", "paginas": [
+    "PREGÃO ELETRÔNICO\ntexto qualquer de abertura do edital\n1. DO OBJETO\nContratação...",
+    "4.6 Os dados deverão estar em SIRGAS 2000\nTabela 3 - Campos\nO plano de serviço será entregue",
+    "sem títulos aqui só texto corrido e mais texto"]}
+ind = documentos.indice(doc_fake)
+check([i["pagina"] for i in ind] == [1, 2], f"índice páginas {ind}")
+check("1. DO OBJETO" in ind[0]["linhas"] and "PREGÃO ELETRÔNICO" in ind[0]["linhas"], f"{ind[0]}")
+check(any(l.startswith("Tabela 3") for l in ind[1]["linhas"]), "tabela no índice")
+ach = documentos.buscar([doc_fake], "plano de servico|sirgas")
+check(len(ach) == 2 and ach[0]["pagina"] == 2, f"busca {ach}")
+check("serviço" in ach[-1]["trecho"] or "serviço" in ach[0]["trecho"], "trecho com acento original")
+lp = documentos.ler_paginas(doc_fake, 2, 99)
+check(lp["de"] == 2 and lp["ate"] == 3 and "[pág. 3]" in lp["texto"], f"ler_paginas {lp['ate']}")
+
+# ------------------------------------------------------------ leitor Claude (sem chamar)
+from planos import leitor_claude as LC  # noqa: E402
+env = LC.ambiente({"ANTHROPIC_API_KEY": "x", "PATH": "p"})
+check(env == {"PATH": "p"}, "ambiente sem chave de API")
+args = LC.argumentos("C:/x/.mcp.json")
+check(args[args.index("--tools") + 1] == "" and "--strict-mcp-config" in args
+      and args[args.index("--allowedTools") + 1] == "mcp__qgis-planos", f"args {args}")
+cfg = LC.config_mcp("py.exe", "ponte.py", "127.0.0.1", 9876, "tok")
+check(cfg["mcpServers"]["qgis-planos"]["env"]["QGIS_IA_FERRAMENTAS"] == "planos_", "filtro")
+ev = LC.interpretar(json.dumps({"type": "assistant", "message": {"content": [
+    {"type": "tool_use", "name": "mcp__qgis-planos__planos_ler_paginas",
+     "input": {"documento": "Edital", "de": 1, "ate": 30}}]}}))
+check(ev == {"tipo": "passo", "texto": "Lendo Edital, p. 1-30"}, f"evento {ev}")
+ev = LC.interpretar(json.dumps({"type": "result", "subtype": "success", "is_error": False,
+                                "result": "Pronto", "total_cost_usd": 1.2, "num_turns": 9}))
+check(ev["tipo"] == "fim" and ev["ok"] and ev["texto"] == "Pronto", f"fim {ev}")
+ev = LC.interpretar(json.dumps({"type": "system", "subtype": "init",
+                                "mcp_servers": [{"name": "qgis-planos", "status": "failed"}]}))
+check(ev["tipo"] == "fim" and not ev["ok"], "mcp falhou")
+check(LC.interpretar("lixo") is None, "linha inválida")
+check(isinstance(LC.achar_claude(), str), "achar_claude")
+
 # ------------------------------------------------------------ janela (QGIS sem tela)
 try:
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -257,7 +302,42 @@ if qgs:
         with open(os.path.join(tmp, "estado.json"), encoding="utf-8") as fh:
             check(json.load(fh)["manuais"].get("insumo|Veículos e placas") is True, "estado.json")
         check("Ainda falta" in jan.lb_placar.text() or "Pronto" in jan.lb_placar.text(), "placar")
+
+        # ferramentas MCP planos_* (o que o Claude chama)
+        from planos import ferramentas as F
+        check(F.JANELA is jan, "janela registrada")
+        anexo = [f for f in os.listdir(EDITAL) if "Anexo-R" in f]
+        if anexo:
+            jan.estado["documentos"] = [os.path.normpath(os.path.join(EDITAL, anexo[0]))]
+            jan._salvar_estado()
+            sit = F.planos_situacao()
+            check(sit["documentos"][0]["paginas"] == 21, f"situação {sit['documentos']}")
+            nome = sit["documentos"][0]["nome"]
+            check(F.planos_indice(nome)["total_paginas"] == 21, "índice")
+            check(F.planos_ler_paginas("Anexo-R", 1, 2)["ate"] == 2, "ler por trecho do nome")
+            b = F.planos_buscar("caminhao|compactador")
+            check(b["ocorrencias"] > 0, "buscar no Anexo R")
+        F.planos_iniciar_perfil()
+        check(os.path.exists(os.path.join(tmp, "contrato_anterior.json")), "backup do perfil")
+        r = F.planos_salvar_secao("servicos", [{"codigo": "P1"}])
+        check(r["ok"] is False and r["erros"], "seção inválida não grava")
+        s1 = perfil.perfil_slu_df()["servicos"][:2]
+        r = F.planos_salvar_secao("servicos", s1)
+        check(r["ok"] and r["itens"] == 2, f"grava serviços {r}")
+        r = F.planos_salvar_secao("servicos", json.dumps(s1[:1]), acrescentar=True)
+        check(r["ok"] and r["itens"] == 3, "acrescentar (dados em texto JSON)")
+        QgsApplication.processEvents()
+        jan._recarregar_perfil_silencioso()
+        check(len(jan.perfil["servicos"]) == 3, "janela recarregou o perfil")
+        check(F.planos_ler_perfil("servicos")[0]["codigo"] == "P1", "ler perfil")
+        check("pronto_para_gerar" in F.planos_checklist(), "checklist por MCP")
+        try:
+            F.planos_salvar_secao("xyz", [])
+            check(False, "seção desconhecida deveria falhar")
+        except ValueError:
+            pass
         jan.desligar()
+        check(F.JANELA is None, "janela desregistrada")
         QgsProject.instance().removeAllMapLayers()
     finally:
         shutil.rmtree(tmp, ignore_errors=True)

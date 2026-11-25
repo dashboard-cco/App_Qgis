@@ -81,7 +81,7 @@ class QgisIaPlugin:
     def abrir_planos(self):
         from .planos.janela import JanelaPlanos
         if self.janela_planos is None:
-            self.janela_planos = JanelaPlanos(self.iface)
+            self.janela_planos = JanelaPlanos(self.iface, self.get_mcp_server)
         self.janela_planos.show()
         self.janela_planos.raise_()
         self.janela_planos.activateWindow()
@@ -125,7 +125,7 @@ class QgisIaPlugin:
             if not has_anthropic and not has_openrouter:
                 from .planos import config_ia
                 from .planos.janela import ConfigIADialog
-                if not config_ia.configurada():
+                if not config_ia.chave_configurada():
                     ConfigIADialog(self.iface.mainWindow(), primeira_vez=True).exec()
                 else:
                     os.environ["ANTHROPIC_API_KEY"] = config_ia.chave()

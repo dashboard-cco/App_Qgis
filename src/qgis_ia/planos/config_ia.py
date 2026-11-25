@@ -1,7 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Conta da IA: onde a chave fica guardada e como testá-la.
+"""Conta da IA.
 
-A chave vai para a variável de ambiente do usuário do Windows (ANTHROPIC_API_KEY), a mesma
+Preferido: a conta Claude (claude.ai) já logada no Claude Code da máquina; o app chama o
+Claude Code, que lê o edital pelas ferramentas MCP planos_* (sem chave de API).
+
+Alternativa: chave de API da Anthropic. A chave vai para a variável de ambiente do usuário do Windows (ANTHROPIC_API_KEY), a mesma
 que o chat do plugin já usa. Assim, ao instalar em outra máquina, basta configurar uma vez
 na janela do app. Fora do Windows, fica nas configurações do QGIS.
 """
@@ -37,8 +40,35 @@ def chave():
     return os.environ.get(VAR, "") or _ler_registro() or _ler_qgis()
 
 
-def configurada():
+def chave_configurada():
     return bool(chave().strip())
+
+
+_CLAUDE = {}
+
+
+def claude_code(atualizar=False):
+    """{"exe", "ok", "metodo", "mensagem"} da conta Claude (Claude Code) desta máquina."""
+    if atualizar or not _CLAUDE:
+        from . import leitor_claude
+        exe = leitor_claude.achar_claude()
+        _CLAUDE.clear()
+        _CLAUDE.update(leitor_claude.status_login(exe), exe=exe)
+    return dict(_CLAUDE)
+
+
+def motor(atualizar=False):
+    """Como o app fala com a IA: "claude" (conta Claude via MCP, preferido), "api" (chave de
+    API) ou "" (nenhum)."""
+    if claude_code(atualizar)["ok"]:
+        return "claude"
+    if chave_configurada():
+        return "api"
+    return ""
+
+
+def configurada(atualizar=False):
+    return bool(motor(atualizar))
 
 
 def mascarar(k):

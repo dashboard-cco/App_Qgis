@@ -115,10 +115,19 @@ def handle_initialize(params):
     }
 
 
+# QGIS_IA_FERRAMENTAS=planos_ expõe só as ferramentas com esse prefixo (usado pelo app
+# Planos do Contrato ao chamar o Claude Code, para ele ver só o que precisa).
+_PREFIXOS = tuple(p for p in os.environ.get("QGIS_IA_FERRAMENTAS", "").split(",") if p)
+
+
+def _visivel(name):
+    return name in TOOLS and (not _PREFIXOS or name.startswith(_PREFIXOS))
+
+
 def handle_tools_list():
     return {"tools": [
         {"name": name, "description": desc, "inputSchema": schema}
-        for name, (desc, schema) in TOOLS.items()
+        for name, (desc, schema) in TOOLS.items() if _visivel(name)
     ]}
 
 
@@ -126,7 +135,7 @@ def handle_tools_call(params):
     params = params or {}
     name = params.get("name")
     arguments = params.get("arguments") or {}
-    if name not in TOOLS:
+    if not _visivel(name):
         return {"content": [{"type": "text", "text": f"Ferramenta desconhecida: {name}"}],
                 "isError": True}
     try:

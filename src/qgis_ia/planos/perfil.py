@@ -120,6 +120,41 @@ LISTAS = ("documentos", "lotes", "servicos", "camadas", "entregaveis", "insumos"
           "pendencias")
 
 
+# ------------------------------------------------------------------ validação
+def valida(dado, esq=None, caminho=""):
+    """Lista de erros do dado contra o esquema (tipos, enums, chaves obrigatórias e extras)."""
+    esq = esq or ESQUEMA
+    erros = []
+    t = esq.get("type")
+    if t == "object":
+        if not isinstance(dado, dict):
+            return [f"{caminho or 'raiz'}: deve ser objeto"]
+        for k in esq["required"]:
+            if k not in dado:
+                erros.append(f"{caminho}.{k}: faltando".lstrip("."))
+            else:
+                erros += valida(dado[k], esq["properties"][k], f"{caminho}.{k}".lstrip("."))
+        extras = [k for k in dado if k not in esq["properties"] and not k.startswith("_")]
+        if extras:
+            erros.append(f"{caminho or 'raiz'}: campos não previstos {extras}")
+    elif t == "array":
+        if not isinstance(dado, list):
+            return [f"{caminho}: deve ser lista"]
+        for i, x in enumerate(dado):
+            erros += valida(x, esq["items"], f"{caminho}[{i}]")
+    elif t == "string":
+        if not isinstance(dado, str):
+            erros.append(f"{caminho}: deve ser texto")
+        elif "enum" in esq and dado not in esq["enum"]:
+            erros.append(f"{caminho}: '{dado}' não é um de {esq['enum']}")
+    elif t == "boolean" and not isinstance(dado, bool):
+        erros.append(f"{caminho}: deve ser true/false")
+    return erros
+
+
+SECOES = ("contrato",) + LISTAS
+
+
 # ------------------------------------------------------------------ uso
 def vazio():
     p = {"contrato": {k: "" for k in ESQUEMA["properties"]["contrato"]["properties"]}}
