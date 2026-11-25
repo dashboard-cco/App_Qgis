@@ -7,6 +7,23 @@ Anexo G do Edital do Pregão Presencial nº 90005/2026 (pasta `Edital/`): File G
 (.gdb), tabelas (.xlsx), texto (.docx) e shapefile. Detalhes em
 [src/qgis_ia/README.md](src/qgis_ia/README.md).
 
+## Planos do Contrato (em desenvolvimento)
+
+Janela própria no QGIS (menu *QGIS_IA → Planos do Contrato*) para criar o plano que o
+contrato pede, a partir do edital e das especificações técnicas:
+
+1. **Documentos** — coloque o edital, os anexos e as especificações (PDF, DOCX ou TXT).
+2. **Requisitos** — a IA lê tudo e monta o perfil do contrato (`contrato.json`): serviços,
+   lotes, camadas e campos exigidos, entregáveis, insumos, regras e pendências, cada item com
+   documento e página. Também há perfis prontos (SLU-DF 90005/2026).
+3. **O que falta** — checklist que compara o perfil com o projeto aberto: 🟢 tem,
+   🟡 incompleto, 🔴 falta, ⚪ confirmar.
+4. **Gerar** e 5. **Validar** — Fase 2.
+
+Precisa de uma conta da IA (Anthropic). Na primeira vez que o QGIS abre numa máquina nova, o
+app pede a chave, testa (chave, modelo e crédito) e grava em `ANTHROPIC_API_KEY` do usuário.
+Código em [src/qgis_ia/planos/](src/qgis_ia/planos/).
+
 ## Versões
 
 | Versão | Arquivo |
@@ -33,4 +50,5 @@ No QGIS: *Complementos → Gerenciar e instalar complementos → Instalar a part
 "C:\Program Files\QGIS 3.44.15\bin\python-qgis-ltr.bat" tests\test_duplicar_ra.py
 "C:\Program Files\QGIS 3.44.15\bin\python-qgis-ltr.bat" tests\test_redesenho.py
 "C:\Program Files\QGIS 3.44.15\bin\python-qgis-ltr.bat" tests\test_soltura.py
+"C:\Program Files\QGIS 3.44.15\bin\python-qgis-ltr.bat" tests\test_planos.py
 ```

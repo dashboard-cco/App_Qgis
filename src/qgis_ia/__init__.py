@@ -39,6 +39,23 @@ class QgisIaPlugin:
         self.iface.addPluginToMenu("&QGIS_IA", self.action)
         self.iface.addToolBarIcon(self.action)
 
+        # App "Planos do Contrato" (janela própria)
+        self.janela_planos = None
+        self.action_planos = QAction(
+            QIcon(":images/themes/default/mActionFileOpen.svg"),
+            "Planos do Contrato",
+            self.iface.mainWindow()
+        )
+        self.action_planos.setToolTip("Planos do Contrato: edital → o que falta → plano")
+        self.action_planos.triggered.connect(self.abrir_planos)
+        self.iface.addPluginToMenu("&QGIS_IA", self.action_planos)
+        self.iface.addToolBarIcon(self.action_planos)
+
+        # Primeiro uso numa máquina nova: configura a conta da IA
+        from qgis.PyQt.QtCore import QTimer
+        from .planos.janela import pedir_configuracao_inicial
+        QTimer.singleShot(2000, lambda: pedir_configuracao_inicial(self.iface.mainWindow()))
+
         # Inicializa cliente Claude (lazy - só quando abrir)
         self.claude_client = None
 
@@ -46,6 +63,13 @@ class QgisIaPlugin:
         """Remove menu/toolbar ao desativar plugin."""
         self.iface.removePluginMenu("&QGIS_IA", self.action)
         self.iface.removeToolBarIcon(self.action)
+        self.iface.removePluginMenu("&QGIS_IA", self.action_planos)
+        self.iface.removeToolBarIcon(self.action_planos)
+        if self.janela_planos:
+            self.janela_planos.desligar()
+            self.janela_planos.close()
+            self.janela_planos.deleteLater()
+            self.janela_planos = None
         if self.mcp_server:
             self.mcp_server.stop()
             self.mcp_server.deleteLater()
@@ -53,6 +77,14 @@ class QgisIaPlugin:
         if self.dockwidget:
             self.dockwidget.close()
             self.dockwidget.deleteLater()
+
+    def abrir_planos(self):
+        from .planos.janela import JanelaPlanos
+        if self.janela_planos is None:
+            self.janela_planos = JanelaPlanos(self.iface)
+        self.janela_planos.show()
+        self.janela_planos.raise_()
+        self.janela_planos.activateWindow()
 
     def toggle_dockwidget(self, checked):
         if checked:
@@ -90,6 +122,14 @@ class QgisIaPlugin:
         if self.claude_client is None:
             has_anthropic = bool(os.environ.get("ANTHROPIC_API_KEY", ""))
             has_openrouter = bool(os.environ.get("OPENROUTER_API_KEY", ""))
+            if not has_anthropic and not has_openrouter:
+                from .planos import config_ia
+                from .planos.janela import ConfigIADialog
+                if not config_ia.configurada():
+                    ConfigIADialog(self.iface.mainWindow(), primeira_vez=True).exec()
+                else:
+                    os.environ["ANTHROPIC_API_KEY"] = config_ia.chave()
+                has_anthropic = bool(os.environ.get("ANTHROPIC_API_KEY", ""))
             if not has_anthropic and not has_openrouter:
                 QMessageBox.warning(
                     self.iface.mainWindow(),
