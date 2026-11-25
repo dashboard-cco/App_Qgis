@@ -15,7 +15,8 @@ def _i(desc):
 
 
 _SECAO = {"type": "string", "enum": ["contrato", "documentos", "lotes", "servicos", "camadas",
-                                     "entregaveis", "insumos", "regras", "pendencias"]}
+                                     "entregaveis", "insumos", "regras", "recursos", "equipes",
+                                     "pendencias"]}
 
 SPECS = {
     "planos_situacao": (
@@ -61,6 +62,23 @@ SPECS = {
         "Valida um plano (.gdb, .gpkg) contra o perfil do contrato: camadas, geometria, "
         "sistema, campos, tipos, obrigatórios, domínios e geometrias inválidas.",
         _obj({"plano": _s("caminho do .gdb/.gpkg do plano")}, ["plano"])),
+    "planos_frota": (
+        "Frota e equipe: veículos que o plano usa (pico por dia e turno) e pessoal (veículos × "
+        "equipe padrão) comparados com o que o edital dá (seções recursos e equipes do perfil).",
+        _obj({"plano": _s("caminho do .gdb/.gpkg do plano")}, ["plano"])),
+    "planos_adequar_frota": (
+        "Propõe como o plano cabe na frota do edital: troca equipamento que o edital não tem e "
+        "tira circuitos juntando-os a um vizinho ou dividindo-os entre 2-3 vizinhos (mesmo "
+        "turno/dias). Com aplicar=true grava numa CÓPIA do plano (<nome>_adequado). "
+        "[aplicar grava arquivo]",
+        _obj({"plano": _s("caminho do .gdb/.gpkg do plano"),
+              "metodo": {"type": "string", "enum": ["auto", "juntar", "dividir"]},
+              "distancia": {"type": "number", "description": "vizinhos até (m); padrão 1500"},
+              "max_receptores": _i("dividir entre no máximo N vizinhos (2 ou 3)"),
+              "outra_regiao": {"type": "boolean",
+                               "description": "em último caso, aceitar vizinho de outra região"},
+              "aplicar": {"type": "boolean", "description": "gravar numa cópia do plano"},
+              "saida": _s("opcional: caminho da cópia")}, ["plano"])),
     "planos_o_que_falta": (
         "Camadas e campos que o perfil exige e que o plano existente ainda não tem.",
         _obj({"plano": _s("caminho do .gdb/.gpkg do plano")}, ["plano"])),

@@ -31,9 +31,11 @@ ferramentas MCP planos_*.
 até 30 páginas por vez) os anexos e as especificações técnicas que tratam do plano. No edital e no \
 termo de referência, use planos_buscar (ex.: "plano de servi", "plano de trabalho", "especifica", \
 "camada|feicao|atributo", "geodatabase|shapefile|gdb|kml", "sirgas|sistema de refer", "prazo", \
-"lote", "frota|veiculo", "frequencia|turno") e leia as páginas relevantes.
+"lote", "frota|veiculo", "frequencia|turno", "equipe padr|guarni|motorista|coletor", \
+"quantidade de m.o de obra|tabela de quantidades") e leia as páginas relevantes.
 5. Grave cada seção com planos_salvar_secao assim que tiver os dados: contrato, documentos, lotes, \
-servicos, camadas, entregaveis, insumos, regras, pendencias. Se voltar com erros, corrija e grave \
+servicos, camadas, entregaveis, insumos, regras, recursos (frota e mão de obra por serviço, lote e \
+turno), equipes (equipe padrão de cada veículo), pendencias. Se voltar com erros, corrija e grave \
 de novo. Camadas com muitos campos podem ser gravadas em partes com acrescentar=true.
 6. No fim, responda em até 3 frases o que montou e as principais pendências."""
 

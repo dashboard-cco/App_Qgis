@@ -264,8 +264,11 @@ class JanelaPlanos(QDialog):
         from .abas_plano import AbaPlano, AbaValidar
         self.aba_plano = AbaPlano(self)
         self.aba_validar = AbaValidar(self)
+        from .abas_frota import AbaFrota
+        self.aba_frota = AbaFrota(self)
         self.abas.addTab(self.aba_plano, "4. Plano")
-        self.abas.addTab(self.aba_validar, "5. Validar")
+        self.abas.addTab(self.aba_frota, "5. Frota e equipe")
+        self.abas.addTab(self.aba_validar, "6. Validar")
         self.abas.currentChanged.connect(self._aba_mudou)
 
         rod = QHBoxLayout()
@@ -361,6 +364,8 @@ class JanelaPlanos(QDialog):
         elif i == 3:
             self.aba_plano.atualizar()
         elif i == 4:
+            self.aba_frota.atualizar()
+        elif i == 5:
             self.aba_validar.atualizar()
 
     def _aba_futura(self, titulo, texto):
@@ -780,6 +785,27 @@ class JanelaPlanos(QDialog):
                 if chave == "entregaveis":
                     det = f"{x['formato']} · {x['descricao']}" + (f" · prazo {x['prazo']}" if x.get("prazo") else "")
                 no(r, nome, det, perfil.fonte_txt(x))
+
+        rec = p.get("recursos") or []
+        r = no(a, f"Frota e pessoal do edital ({len(rec)})")
+        grupos = {}
+        for x in rec:
+            chave = f"{x['servico']} · lote {x['lote'] or 'todos'}"
+            g = grupos.get(chave) or no(r, chave, "")
+            grupos[chave] = g
+            ic = "🚛" if x["categoria"] == "equipamento" else "👷"
+            no(g, f"{ic} {x['nome']}",
+               f"diurno {x['diurno']} · noturno {x['noturno']}"
+               + (" · domingo" if x.get("domingo") else "")
+               + (f" · código no plano {x['codigo_no_plano']}" if x.get("codigo_no_plano") else ""),
+               perfil.fonte_txt(x))
+        eqs = p.get("equipes") or []
+        r = no(a, f"Equipes padrão ({len(eqs)})")
+        for x in eqs:
+            no(r, f"{x['servico']} · {x['nome']}",
+               f"{x['equipamento']}: " + ", ".join(f"{f['quantidade']} {f['funcao']}"
+                                                   for f in x["funcoes"]),
+               perfil.fonte_txt(x))
         r = no(a, f"Pendências ({len(p['pendencias'])})")
         for x in p["pendencias"]:
             no(r, x)

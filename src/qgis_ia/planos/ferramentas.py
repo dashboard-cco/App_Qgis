@@ -201,7 +201,51 @@ def planos_o_que_falta(plano):
     return estrutura.o_que_falta(p, plano, srv)
 
 
+def planos_frota(plano):
+    """Veículos e pessoal que o plano usa (pico por dia e turno) × o que o edital dá."""
+    from . import frota
+    pasta = _pasta()
+    p = _perfil(pasta)
+    if p is None:
+        raise RuntimeError("Ainda não há perfil do contrato.")
+    srv = estrutura_servicos(p, plano, pasta)
+    r = frota.comparar(p, plano, srv)
+    r["avisos"] = r["avisos"][:30]
+    return r
+
+
+def planos_adequar_frota(plano, metodo="auto", distancia=1500, max_receptores=3,
+                         outra_regiao=False, aplicar=False, saida=""):
+    """Proposta (ou gravação numa cópia) para o plano caber na frota do edital."""
+    from . import frota
+    pasta = _pasta()
+    p = _perfil(pasta)
+    if p is None:
+        raise RuntimeError("Ainda não há perfil do contrato.")
+    srv = estrutura_servicos(p, plano, pasta)
+    pr = frota.propor(p, plano, srv, metodo=metodo, distancia=float(distancia),
+                      max_receptores=int(max_receptores), outra_regiao=bool(outra_regiao))
+    resumo = {k: pr[k] for k in ("plano", "servicos", "lote", "cabe", "nao_coube", "depois")}
+    resumo["trocas"] = [{k: t[k] for k in ("nome_de", "turno", "nome_para", "circuitos")}
+                        for t in pr["trocas"]]
+    resumo["operacoes"] = [{"tipo": o["tipo"], "circuito": o["circuito"], "turno": o["turno"],
+                            "km": o["carga"],
+                            "vai_para": [{k: r[k] for k in ("codigo", "km", "carga_depois",
+                                                            "dias_a_mais", "outra_regiao")}
+                                         for r in o["recebem"]]} for o in pr["operacoes"]]
+    if aplicar:
+        resumo["gravado"] = frota.aplicar(p, plano, pr, saida or None)
+    return resumo
+
+
+def estrutura_servicos(p, plano, pasta):
+    from . import estrutura
+    return estrutura.servicos_do_arquivo(p, plano) or _estado(pasta).get("servicos", [])
+
+
 TOOLS = {
+    "planos_frota": planos_frota,
+    "planos_adequar_frota": planos_adequar_frota,
     "planos_validar": planos_validar,
     "planos_o_que_falta": planos_o_que_falta,
     "planos_situacao": planos_situacao,

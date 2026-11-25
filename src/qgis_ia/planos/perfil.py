@@ -2,7 +2,8 @@
 """Perfil do contrato: o que o edital e as especificações exigem para gerar o plano.
 
 É um dicionário JSON (salvo em contrato.json na pasta do contrato) com:
-    contrato, documentos, lotes, servicos, camadas, entregaveis, insumos, regras, pendencias
+    contrato, documentos, lotes, servicos, camadas, entregaveis, insumos, regras, recursos,
+    equipes, pendencias
 
 Cada item traz "fonte" = {"documento": nome, "paginas": "12-13"} para conferência.
 Sem QGIS: pode ser testado sozinho.
@@ -43,6 +44,7 @@ TIPOS_CAMPO = ["texto", "inteiro", "decimal", "data", "data_hora", "booleano"]
 TIPOS_INSUMO = ["camada_geografica", "tabela", "documento", "informacao"]
 TIPOS_DOCUMENTO = ["edital", "termo_referencia", "anexo", "especificacao_tecnica", "outro"]
 TIPOS_REGRA = ["formato", "validacao", "dimensionamento", "prazo", "outro"]
+CATEGORIAS_RECURSO = ["equipamento", "pessoal"]
 
 ESQUEMA = _obj({
     "contrato": _obj({
@@ -114,11 +116,31 @@ ESQUEMA = _obj({
         "tipo": {"type": "string", "enum": TIPOS_REGRA},
         "fonte": _FONTE,
     })),
+    "recursos": _lista(_obj({
+        "servico": {"type": "string", "description": "código do serviço, ex.: 'P1'"},
+        "lote": {"type": "string", "description": "código do lote; vazio se vale para todos"},
+        "categoria": {"type": "string", "enum": CATEGORIAS_RECURSO},
+        "nome": {"type": "string", "description": "veículo/equipamento ou função, como no edital, ex.: 'Compactador de 19 m³', 'Motorista', 'Coletor'"},
+        "codigo_no_plano": {"type": "string", "description": "equipamento: código do valor permitido do campo de tipo de equipamento do plano, ex.: '0' para '0 - Caminhão Coletor Compactador de 19 m³'; vazio se não souber ou se for pessoal"},
+        "diurno": {"type": "integer", "description": "quantidade no turno diurno (0 se não houver)"},
+        "noturno": {"type": "integer", "description": "quantidade no turno noturno (0 se não houver)"},
+        "domingo": {"type": "boolean", "description": "true se também trabalha aos domingos"},
+        "fonte": _FONTE,
+    }), "frota e mão de obra que o edital dá por serviço, lote e turno (ex.: tabela de quantidades)"),
+    "equipes": _lista(_obj({
+        "servico": _S,
+        "nome": {"type": "string", "description": "ex.: 'Equipe Padrão de Coleta Seletiva'"},
+        "equipamento": {"type": "string", "description": "veículo da equipe, como no edital"},
+        "codigo_no_plano": {"type": "string", "description": "código do equipamento no campo de tipo de equipamento do plano; vazio se não souber"},
+        "funcoes": _lista(_obj({"funcao": _S, "quantidade": {"type": "integer"}}),
+                          "pessoas por veículo, ex.: [{'funcao': 'Motorista', 'quantidade': 1}, {'funcao': 'Coletor', 'quantidade': 3}]"),
+        "fonte": _FONTE,
+    }), "equipe padrão (guarnição) de cada veículo"),
     "pendencias": _lista(_S, "dúvidas, contradições ou informações que faltam nos documentos"),
 })
 
 LISTAS = ("documentos", "lotes", "servicos", "camadas", "entregaveis", "insumos", "regras",
-          "pendencias")
+          "recursos", "equipes", "pendencias")
 
 
 # ------------------------------------------------------------------ validação
@@ -228,7 +250,8 @@ def resumo(p):
     """Contagem curta para mostrar na janela."""
     return (f"{len(p['servicos'])} serviços · {len(p['lotes'])} lotes · "
             f"{len(p['camadas'])} camadas · {len(p['entregaveis'])} entregáveis · "
-            f"{len(p['insumos'])} insumos · {len(p['pendencias'])} pendências")
+            f"{len(p['insumos'])} insumos · {len(p.get('recursos') or [])} recursos · "
+            f"{len(p['pendencias'])} pendências")
 
 
 # --------------------------------------------- perfil pronto: SLU-DF 90005/2026
@@ -285,13 +308,17 @@ def perfil_slu_df():
     for grupo, servs in grupos_camadas.items():
         for c in E.esquema(servs[0], 1):
             chave = (c["nome"], grupo)
-            doms = E.dominios(servs[0], 1)
+            # domínios de todos os serviços do grupo (ex.: lote = CC01..CC03 e CS01..CS03)
+            doms = {}
+            for sv in servs:
+                for nome_d, (_, _, valores) in E.dominios(sv, 1).items():
+                    doms.setdefault(nome_d, {}).update(valores)
             campos = []
             for f in c["campos"]:
                 vals = []
                 if f["dominio"] and f["dominio"] in doms:
                     vals = [f"{k} - {v}" if str(k) != str(v) else str(v)
-                            for k, v in doms[f["dominio"]][2].items()]
+                            for k, v in doms[f["dominio"]].items()]
                 campos.append({"nome": f["nome"], "tipo": _TIPO.get(f["tipo"], "texto"),
                                "tamanho": f["tamanho"] or 0, "obrigatorio": True, "descricao": f["apelido"] or "",
                                "valores_permitidos": vals})
@@ -349,8 +376,52 @@ def perfil_slu_df():
         {"descricao": "Textos em Word, Arial 12 no corpo e 14 nos títulos.", "tipo": "formato",
          "fonte": {"documento": edital, "paginas": ""}},
     ]
+    p["recursos"], p["equipes"] = _recursos_slu(E, edital)
     p["_meta"]["origem"] = "perfil pronto SLU-DF (edital_slu.py)"
     return p
+
+
+# Anexo R: motoristas e coletores (diurno, noturno) de P1 (+P1A, cujos compactadores c/ munk
+# estão na frota do P1) e de P2, por lote (págs. 1-3, 9-10, 17-18).
+_PESSOAL_SLU = {
+    ("P1", 1): {"Motorista": (49, 22), "Coletor": (130, 61)},
+    ("P1", 2): {"Motorista": (53, 24), "Coletor": (136, 67)},
+    ("P1", 3): {"Motorista": (51, 21), "Coletor": (139, 58)},
+    ("P2", 1): {"Motorista": (9, 4), "Coletor": (18, 8)},
+    ("P2", 2): {"Motorista": (14, 6), "Coletor": (28, 12)},
+    ("P2", 3): {"Motorista": (11, 3), "Coletor": (22, 6)},
+}
+# Edital, Quadros 12 (P1) e 16 (P2): equipe padrão por veículo
+_EQUIPES_SLU = [
+    ("P1", "Equipe Padrão de Coleta (Convencional e Limpeza Urbana)", 0, 3, "37"),
+    ("P1", "Equipe Padrão de Coleta (Semienterrado)", 1, 2, "37"),
+    ("P1", "Equipe Padrão de Coleta (Rejeito de IRR)", 14, 2, "37"),
+    ("P2", "Equipe Padrão de Coleta Seletiva", 2, 2, "41"),
+    ("P2", "Equipe Padrão de Coleta de LEV", 3, 2, "41"),
+    ("P2", "Equipe Padrão de Coleta Seletiva (6 m³)", 14, 2, "41"),
+]
+
+
+def _recursos_slu(E, edital):
+    anexo_r = "20-PREGAO-90005-26-Anexo-R"
+    rec = []
+    for (srv, lote), frota in E.FROTA_ANEXO_R.items():
+        for cod, t in frota.items():
+            rec.append({"servico": srv, "lote": str(lote), "categoria": "equipamento",
+                        "nome": E.EQUIPAMENTOS[cod], "codigo_no_plano": str(cod),
+                        "diurno": int(t.get("Diurno", 0)), "noturno": int(t.get("Noturno", 0)),
+                        "domingo": True, "fonte": {"documento": anexo_r, "paginas": ""}})
+        for funcao, (d, n) in _PESSOAL_SLU.get((srv, lote), {}).items():
+            rec.append({"servico": srv, "lote": str(lote), "categoria": "pessoal",
+                        "nome": funcao, "codigo_no_plano": "", "diurno": d, "noturno": n,
+                        "domingo": True, "fonte": {"documento": anexo_r, "paginas": ""}})
+    eqs = [{"servico": srv, "nome": nome, "equipamento": E.EQUIPAMENTOS[cod],
+            "codigo_no_plano": str(cod),
+            "funcoes": [{"funcao": "Motorista", "quantidade": 1},
+                        {"funcao": "Coletor", "quantidade": col}],
+            "fonte": {"documento": edital, "paginas": pg}}
+           for srv, nome, cod, col, pg in _EQUIPES_SLU]
+    return rec, eqs
 
 
 def _ins(nome, desc, tipo, chaves, obrigatorio=True, fornecido=False):

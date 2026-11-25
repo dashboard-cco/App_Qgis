@@ -22,7 +22,15 @@ contrato pede, a partir do edital e das especificações técnicas:
    plano já aceito) e põe no perfil os nomes técnicos de camadas e campos, tamanhos e domínios.
    *Plano existente*: mostra o que falta no seu plano e **cria só o que falta** (camadas e
    campos com domínio), sem apagar nada e com cópia de segurança.
-5. **Validar** — confere o plano contra o perfil: camadas, geometria, sistema, campos, tipos,
+5. **Frota e equipe** — adequa o plano já feito à frota e ao pessoal do edital novo (seções
+   *recursos* e *equipes* do perfil). Compara veículos (pico por dia e turno) e pessoal
+   (veículos × equipe padrão) com o edital e propõe como caber: troca o equipamento que o
+   edital não tem pelo mais parecido com sobra e tira circuitos — **juntando** a um vizinho ou
+   **dividindo** entre 2-3 vizinhos (cada linha vai para o mais perto), sempre o que deixa a
+   carga mais equilibrada, entre circuitos do mesmo equipamento, turno e dias. Grava numa
+   cópia (`<plano>_adequado.gdb`); relatório em .xlsx. Sem roteirização: a ordem de passagem
+   dos circuitos que receberam linhas deve ser revista.
+6. **Validar** — confere o plano contra o perfil: camadas, geometria, sistema, campos, tipos,
    tamanhos, obrigatórios vazios, valores fora do domínio e geometrias inválidas. Clique duplo
    seleciona as feições no mapa; relatório em .xlsx.
 
@@ -61,4 +69,5 @@ No QGIS: *Complementos → Gerenciar e instalar complementos → Instalar a part
 "C:\Program Files\QGIS 3.44.15\bin\python-qgis-ltr.bat" tests\test_soltura.py
 "C:\Program Files\QGIS 3.44.15\bin\python-qgis-ltr.bat" tests\test_planos.py
 "C:\Program Files\QGIS 3.44.15\bin\python-qgis-ltr.bat" tests\test_planos_fase2.py
+"C:\Program Files\QGIS 3.44.15\bin\python-qgis-ltr.bat" tests\test_planos_frota.py
 ```
