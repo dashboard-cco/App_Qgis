@@ -220,23 +220,62 @@ def planos_frota(plano):
 
 
 def planos_adequar_frota(plano, metodo="auto", distancia=1500, max_receptores=3,
-                         outra_regiao=False, aplicar=False, saida=""):
-    """Proposta (ou gravação numa cópia) para o plano caber na frota do edital."""
+                         outra_regiao=False, aplicar=False, saida="", historico="",
+                         horarios=True, mudar_turno=True, equipar=None, desdobrar=None,
+                         equip_desdobrar="", redimensionar=None):
+    """Proposta (ou gravação numa cópia) para o plano ficar como o edital pede: horários,
+    turnos, frota e — com histórico de operação — jornada e desdobramento."""
     from . import frota
+    from . import historico as H
     pasta = _pasta()
     p = _perfil(pasta)
     if p is None:
         raise RuntimeError("Ainda não há perfil do contrato.")
     srv = estrutura_servicos(p, plano, pasta)
+    arq = historico or _estado(pasta).get("historico_operacao") or ""
+    hist = None
+    if arq:
+        if not os.path.exists(arq):
+            raise FileNotFoundError(f"Histórico não encontrado: {arq}")
+        hist = H.ler(arq, cache=os.path.join(pasta, "historico_cache.json"))
+    # padrão = o que está escolhido na aba Frota e equipe
+    op = _estado(pasta).get("frota_opcoes") or {}
+    if equipar is None:
+        import re
+        cods = [c for c in re.split(r"[\s,;]+", op.get("equipar") or "") if c]
+        equipar = {c: op.get("equipar_equip") for c in cods} if op.get("equipar_equip") else {}
+    elif isinstance(equipar, list):
+        equipar = {str(c): op.get("equipar_equip") or "1" for c in equipar}
+    if desdobrar is None:
+        desdobrar = (op.get("base") or "") if op.get("desdobrar") else ""
+    equip_desdobrar = equip_desdobrar or op.get("desdobrar_equip") or None
+    if redimensionar is None:
+        redimensionar = op.get("maximo", True)
     pr = frota.propor(p, plano, srv, metodo=metodo, distancia=float(distancia),
-                      max_receptores=int(max_receptores), outra_regiao=bool(outra_regiao))
-    resumo = {k: pr[k] for k in ("plano", "servicos", "lote", "cabe", "nao_coube", "depois")}
+                      max_receptores=int(max_receptores), outra_regiao=bool(outra_regiao),
+                      historico=hist, horarios=bool(horarios), mudar_turno=bool(mudar_turno),
+                      equipar=equipar, desdobrar=desdobrar or "",
+                      equip_desdobrar=equip_desdobrar,
+                      redimensionar=bool(redimensionar) and hist is not None)
+    resumo = {k: pr[k] for k in ("plano", "servicos", "lote", "cabe", "nao_coube", "depois",
+                                 "jornada", "historico", "horarios", "mudancas_turno",
+                                 "acima_jornada", "equipados", "pontos")}
+    resumo["desdobramentos"] = [{k: v for k, v in nv.items() if k != "origens"}
+                                | {"origens": [{k: o[k] for k in ("circuito", "inteiro", "turno",
+                                                                  "km", "tempo_antes",
+                                                                  "tempo_depois")}
+                                               for o in nv["origens"]]}
+                                for nv in pr["desdobramentos"]]
+    resumo["horas_por_dia"] = [h for h in pr["horas_depois"]
+                               if h["saldo"] is not None and h["saldo"] < 0] or "sem falta"
     resumo["trocas"] = [{k: t[k] for k in ("nome_de", "turno", "nome_para", "circuitos")}
                         for t in pr["trocas"]]
-    resumo["operacoes"] = [{"tipo": o["tipo"], "circuito": o["circuito"], "turno": o["turno"],
-                            "km": o["carga"],
-                            "vai_para": [{k: r[k] for k in ("codigo", "km", "carga_depois",
-                                                            "dias_a_mais", "outra_regiao")}
+    resumo["operacoes"] = [{"tipo": o["tipo"], "maximo": bool(o.get("redimensionar")),
+                            "circuito": o["circuito"], "turno": o["turno"],
+                            "km": o["carga"], "tempo_h": o.get("tempo"),
+                            "vai_para": [{k: r.get(k) for k in ("codigo", "km", "carga_depois",
+                                                                "tempo_depois", "dias_a_mais",
+                                                                "outra_regiao", "turno")}
                                          for r in o["recebem"]]} for o in pr["operacoes"]]
     if aplicar:
         resumo["gravado"] = frota.aplicar(p, plano, pr, saida or None)

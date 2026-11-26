@@ -16,7 +16,7 @@ def _i(desc):
 
 _SECAO = {"type": "string", "enum": ["contrato", "documentos", "lotes", "servicos", "camadas",
                                      "entregaveis", "insumos", "regras", "recursos", "equipes",
-                                     "pendencias"]}
+                                     "turnos", "pendencias"]}
 
 SPECS = {
     "planos_situacao": (
@@ -67,16 +67,46 @@ SPECS = {
         "equipe padrão) comparados com o que o edital dá (seções recursos e equipes do perfil).",
         _obj({"plano": _s("caminho do .gdb/.gpkg do plano")}, ["plano"])),
     "planos_adequar_frota": (
-        "Propõe como o plano cabe na frota do edital: troca equipamento que o edital não tem e "
-        "tira circuitos juntando-os a um vizinho ou dividindo-os entre 2-3 vizinhos (mesmo "
-        "turno/dias). Com aplicar=true grava numa CÓPIA do plano (<nome>_adequado). "
-        "[aplicar grava arquivo]",
+        "Propõe como o plano fica como o edital pede: horários dos turnos do edital, muda de "
+        "turno (ou troca) o equipamento que o edital não tem no turno, tira circuitos "
+        "juntando-os a um vizinho ou dividindo-os entre vizinhos (mesmo turno/dias) e, com o "
+        "histórico de operação (planilha de RDs: peso e tempo por circuito), respeita a jornada "
+        "do edital (7h20): quem recebe tem de caber nela e circuitos acima dela passam linhas a "
+        "vizinhos com folga; mostra as horas por dia que faltam. Pode passar circuitos para "
+        "outro equipamento (equipar) e desdobrar: a sobra de munk vira circuitos novos mistos "
+        "que saem de uma base e recebem circuitos do turno que falta e a parte acima da "
+        "jornada. Redimensionar ao máximo (padrão): o que ainda passa do edital é repartido "
+        "entre mais vizinhos, mais longe e também do outro turno, até a jornada; o que não "
+        "couber volta em 'pontos' (o que levar ao órgão depois de ganhar a licitação). "
+        "Com aplicar=true grava numa "
+        "CÓPIA do plano (<nome>_adequado). [aplicar grava arquivo]",
         _obj({"plano": _s("caminho do .gdb/.gpkg do plano"),
               "metodo": {"type": "string", "enum": ["auto", "juntar", "dividir"]},
               "distancia": {"type": "number", "description": "vizinhos até (m); padrão 1500"},
-              "max_receptores": _i("dividir entre no máximo N vizinhos (2 ou 3)"),
+              "max_receptores": _i("dividir entre no máximo N vizinhos (2 a 4)"),
+              "historico": _s("opcional: planilha de RDs (.xlsx); padrão = a escolhida na aba "
+                              "Frota e equipe"),
+              "horarios": {"type": "boolean",
+                           "description": "pôr o horário do turno do edital (padrão true)"},
+              "mudar_turno": {"type": "boolean",
+                              "description": "mudar de turno o equipamento que o edital não "
+                                             "tem no turno, se houver sobra no outro (padrão true)"},
               "outra_regiao": {"type": "boolean",
                                "description": "em último caso, aceitar vizinho de outra região"},
+              "equipar": {"type": "object",
+                          "description": "circuitos que passam para outro equipamento antes de "
+                                         "tudo: {codigo_circuito: codigo_equipamento}, ex.: "
+                                         "{'182501': '1'} (munk faz o Noroeste); padrão = o "
+                                         "escolhido na aba Frota e equipe"},
+              "desdobrar": _s("base (DL/garagem/local de pesagem) de onde saem os circuitos "
+                              "NOVOS mistos feitos com a sobra de equipamento, ex.: "
+                              "'Sobradinho'; '' = não desdobrar; padrão = o escolhido na aba"),
+              "equip_desdobrar": _s("código do equipamento cuja sobra vira circuitos novos "
+                                    "(padrão: o munk)"),
+              "redimensionar": {"type": "boolean",
+                                "description": "redimensionar ao máximo para caber no edital "
+                                               "(padrão: o escolhido na aba; precisa do "
+                                               "histórico)"},
               "aplicar": {"type": "boolean", "description": "gravar numa cópia do plano"},
               "saida": _s("opcional: caminho da cópia")}, ["plano"])),
     "planos_o_que_falta": (

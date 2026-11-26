@@ -814,6 +814,14 @@ class JanelaPlanos(QDialog):
                f"{x['equipamento']}: " + ", ".join(f"{f['quantidade']} {f['funcao']}"
                                                    for f in x["funcoes"]),
                perfil.fonte_txt(x))
+        tur = p.get("turnos") or []
+        r = no(a, f"Turnos e jornada ({len(tur)})")
+        for x in tur:
+            no(r, f"{x['servico']} · {x['nome']} {x['inicio']}–{x['fim']}",
+               f"jornada {x['jornada']}"
+               + (f" · só equipamento {x['equipamento']}" if x.get("equipamento") else "")
+               + (f" · {x['observacao']}" if x.get("observacao") else ""),
+               perfil.fonte_txt(x))
         r = no(a, f"Pendências ({len(p['pendencias'])})")
         for x in p["pendencias"]:
             no(r, x)

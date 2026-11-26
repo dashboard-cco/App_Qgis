@@ -3,7 +3,7 @@
 
 É um dicionário JSON (salvo em contrato.json na pasta do contrato) com:
     contrato, documentos, lotes, servicos, camadas, entregaveis, insumos, regras, recursos,
-    equipes, pendencias
+    equipes, turnos, pendencias
 
 Cada item traz "fonte" = {"documento": nome, "paginas": "12-13"} para conferência.
 Sem QGIS: pode ser testado sozinho.
@@ -139,11 +139,22 @@ ESQUEMA = _obj({
                           "pessoas por veículo, ex.: [{'funcao': 'Motorista', 'quantidade': 1}, {'funcao': 'Coletor', 'quantidade': 3}]"),
         "fonte": _FONTE,
     }), "equipe padrão (guarnição) de cada veículo"),
-    "pendencias": _lista(_S, "dúvidas, contradições ou informações que faltam nos documentos"),
+    "turnos": _lista(_obj({
+        "servico": {"type": "string", "description": "código do serviço, ex.: 'P1'"},
+        "nome": {"type": "string", "enum": ["Diurno", "Noturno"],
+                 "description": "1º turno = Diurno, 2º turno = Noturno"},
+        "inicio": {"type": "string", "description": "hora de início, 'HH:MM', ex.: '06:00'"},
+        "fim": {"type": "string", "description": "hora de término, 'HH:MM', ex.: '14:20'"},
+        "jornada": {"type": "string", "description": "jornada de trabalho por turno, sem o intervalo, 'HH:MM', ex.: '07:20'"},
+        "equipamento": {"type": "string", "description": "código no plano do equipamento a que este horário se aplica só a ele (ex.: o munk do papa-lixo); vazio = vale para todos"},
+        "observacao": _S,
+        "fonte": _FONTE,
+    }), "horário de cada turno por serviço e jornada (quadros de turnos e horários)"),
+    "pendencias":_lista(_S, "dúvidas, contradições ou informações que faltam nos documentos"),
 })
 
 LISTAS = ("documentos", "lotes", "servicos", "camadas", "entregaveis", "insumos", "regras",
-          "recursos", "equipes", "pendencias")
+          "recursos", "equipes", "turnos", "pendencias")
 
 
 # ------------------------------------------------------------------ validação
@@ -382,6 +393,7 @@ def perfil_slu_df():
          "fonte": {"documento": edital, "paginas": ""}},
     ]
     p["recursos"], p["equipes"] = _recursos_slu(E, edital)
+    p["turnos"] = _turnos_slu(edital)
     p["_meta"]["origem"] = "perfil pronto SLU-DF (edital_slu.py)"
     return p
 
@@ -408,6 +420,23 @@ _EQUIPES_SLU = [
     ("P2", "Equipe Padrão de Coleta de LEV", 3, 2, "41"),
     ("P2", "Equipe Padrão de Coleta Seletiva (6 m³)", 14, 2, "41"),
 ]
+
+
+# Edital, Quadros 05 (P1, pág. 34) e 13 (P2, pág. 40); jornada de 7h20 + 1h de intervalo
+# (itens 5.2.39 e 5.3.29). O 1º turno das 08h00 às 16h20 é só para o papa-lixo (munk).
+_TURNOS_SLU = [
+    ("P1", "Diurno", "06:00", "14:20", "", "todos os tipos de coleta", "34"),
+    ("P1", "Diurno", "08:00", "16:20", "1", "apenas papa-lixo (semienterrado)", "34"),
+    ("P1", "Noturno", "16:00", "00:20", "", "", "34"),
+    ("P2", "Diurno", "06:00", "14:20", "", "", "40"),
+    ("P2", "Noturno", "16:00", "00:20", "", "", "40"),
+]
+
+
+def _turnos_slu(edital):
+    return [{"servico": s, "nome": n, "inicio": i, "fim": f, "jornada": "07:20",
+             "equipamento": eq, "observacao": obs, "fonte": {"documento": edital, "paginas": pg}}
+            for s, n, i, f, eq, obs, pg in _TURNOS_SLU]
 
 
 def _recursos_slu(E, edital):
