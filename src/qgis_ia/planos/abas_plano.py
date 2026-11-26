@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Abas 4 (Plano existente) e 5 (Validar) da janela Planos do Contrato."""
+"""Abas 4 (Plano existente) e 7 (Validar) da janela Planos do Contrato."""
 import os
 import shutil
 
@@ -269,7 +269,7 @@ class AbaPlano(QWidget):
         self.j._status(f"Perfil completado com o modelo {os.path.basename(m)}.")
 
 
-# ====================================================================== aba 5
+# ====================================================================== aba 7 (Validar)
 class AbaValidar(QWidget):
     def __init__(self, janela):
         super().__init__()

@@ -32,7 +32,8 @@ MUTATING = frozenset({
 
 # Ferramentas que só gravam arquivo quando recebem um parâmetro específico.
 MUTATING_IF_PARAM = {"slu_validar_gdb": ("relatorio_xlsx", "carregar_erros"),
-                     "planos_adequar_frota": ("aplicar",)}
+                     "planos_adequar_frota": ("aplicar",),
+                     "planos_importar": ("aplicar",)}
 
 # Execução de Python arbitrário: tem uma chave própria no painel, separada do
 # modo somente leitura, e começa desligada.

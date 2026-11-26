@@ -265,10 +265,13 @@ class JanelaPlanos(QDialog):
         self.aba_plano = AbaPlano(self)
         self.aba_validar = AbaValidar(self)
         from .abas_frota import AbaFrota
+        from .abas_importar import AbaImportar
         self.aba_frota = AbaFrota(self)
+        self.aba_importar = AbaImportar(self)
         self.abas.addTab(self.aba_plano, "4. Plano")
-        self.abas.addTab(self.aba_frota, "5. Frota e equipe")
-        self.abas.addTab(self.aba_validar, "6. Validar")
+        self.abas.addTab(self.aba_importar, "5. Trazer dados")
+        self.abas.addTab(self.aba_frota, "6. Frota e equipe")
+        self.abas.addTab(self.aba_validar, "7. Validar")
         self.abas.currentChanged.connect(self._aba_mudou)
 
         rod = QHBoxLayout()
@@ -364,8 +367,10 @@ class JanelaPlanos(QDialog):
         elif i == 3:
             self.aba_plano.atualizar()
         elif i == 4:
-            self.aba_frota.atualizar()
+            self.aba_importar.atualizar()
         elif i == 5:
+            self.aba_frota.atualizar()
+        elif i == 6:
             self.aba_validar.atualizar()
 
     def _aba_futura(self, titulo, texto):
@@ -420,6 +425,7 @@ class JanelaPlanos(QDialog):
         self._mostrar_perfil()
         self.aba_plano.atualizar()
         self.aba_validar.atualizar()
+        self.aba_importar.info = None
 
     def _salvar_estado(self):
         os.makedirs(self.pasta, exist_ok=True)

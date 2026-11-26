@@ -83,4 +83,31 @@ SPECS = {
         "Camadas e campos que o perfil exige e que o plano existente ainda não tem, e registros "
         "vazios em campos com valor padrão no perfil (ex.: ciclo = 0).",
         _obj({"plano": _s("caminho do .gdb/.gpkg do plano")}, ["plano"])),
+    "planos_importar_ligar": (
+        "Trazer dados: liga automaticamente uma camada sua (shp, gpkg, gdb, geojson, kml, csv) a "
+        "uma camada do plano (escolhe a camada pela geometria e campos, se não for dada). Devolve "
+        "a ligação, os campos do destino (descrição, valores permitidos) e amostras da origem, "
+        "para completar com planos_importar.",
+        _obj({"origem": _s("caminho do arquivo/.gdb de origem"),
+              "camada_origem": _s("nome da camada na origem (shapefile: nome do arquivo sem .shp)"),
+              "plano": _s("caminho do .gdb/.gpkg do plano"),
+              "camada_destino": _s("opcional: camada do plano")},
+             ["origem", "camada_origem", "plano"])),
+    "planos_importar": (
+        "Trazer dados: prévia (aplicar=false) ou cópia das feições de uma camada sua para a "
+        "camada do plano, convertendo tipos e valores para os códigos do contrato, reprojetando "
+        "e ajustando a geometria. Antes de gravar faz cópia de segurança do plano. [aplicar grava arquivo]",
+        _obj({"origem": _s("caminho do arquivo/.gdb de origem"),
+              "camada_origem": _s("nome da camada na origem"),
+              "plano": _s("caminho do .gdb/.gpkg do plano"),
+              "camada_destino": _s("camada do plano"),
+              "campos": {"type": "object",
+                         "description": "correções da ligação automática: {campo_destino: "
+                                        "{origem: campo da origem ou '', fixo: valor para todos, "
+                                        "valores: {valor da origem: código permitido}}}"},
+              "substituir": {"type": "boolean",
+                             "description": "apagar antes as feições da camada do plano "
+                                            "(padrão: acrescentar)"},
+              "aplicar": {"type": "boolean", "description": "gravar (senão só prévia)"}},
+             ["origem", "camada_origem", "plano", "camada_destino"])),
 }

@@ -243,12 +243,70 @@ def planos_adequar_frota(plano, metodo="auto", distancia=1500, max_receptores=3,
     return resumo
 
 
+def planos_importar_ligar(origem, camada_origem, plano, camada_destino=""):
+    """Ligação automática de uma camada sua a uma camada do plano, com os campos do destino
+    (descrição, valores permitidos) e amostras de valores da origem, para completar a ligação."""
+    from . import importacao
+    pasta = _pasta()
+    p = _perfil(pasta)
+    srv = estrutura_servicos(p, plano, pasta) if p else []
+    ant = importacao.anterior(_estado(pasta), origem, camada_origem, plano, camada_destino or None)
+    info = importacao.montar_ligacao(p, origem, camada_origem, plano, camada_destino or None, srv,
+                                     anterior=ant)
+    return {"ligacao": info["ligacao"],
+            "destino": [{k: f[k] for k in ("nome", "descricao", "tipo", "obrigatorio",
+                                           "valores_permitidos", "valor_padrao")}
+                        for f in info["destino"]["campos"]],
+            "origem": [{"nome": f["nome"], "tipo": f["tipo"],
+                        "amostra": [v for v, _n in info["amostras"].get(f["nome"], {})
+                                    .get("valores", [])[:15]]} for f in info["origem"]["campos"]]}
+
+
+def planos_importar(origem, camada_origem, plano, camada_destino, campos=None, substituir=False,
+                    aplicar=False):
+    """Prévia (aplicar=false) ou importação de uma camada sua para a camada do plano.
+    `campos`: {campo_destino: {"origem", "fixo", "valores"}} — completa/corrige a automática."""
+    from . import importacao
+    pasta = _pasta()
+    p = _perfil(pasta)
+    srv = estrutura_servicos(p, plano, pasta) if p else []
+    estado = _estado(pasta)
+    ant = importacao.anterior(estado, origem, camada_origem, plano, camada_destino)
+    lig = importacao.montar_ligacao(p, origem, camada_origem, plano, camada_destino, srv,
+                                    anterior=ant)["ligacao"]
+    for nome, spec in (campos or {}).items():
+        if nome in lig["campos"] and isinstance(spec, dict):
+            atual = lig["campos"][nome]
+            for k in ("origem", "fixo"):
+                if k in spec:
+                    atual[k] = importacao.txt(spec[k])
+            if "valores" in spec:
+                atual["valores"] = {importacao.txt(a): importacao.txt(b)
+                                    for a, b in (spec["valores"] or {}).items()}
+            atual["como"] = "ia"
+    lig["substituir"] = bool(substituir)
+    rel = importacao.executar(lig, p, srv, gravar=bool(aplicar))
+    importacao.guardar(estado, lig)
+    with open(os.path.join(pasta, ARQ_ESTADO), "w", encoding="utf-8") as fh:
+        json.dump(estado, fh, ensure_ascii=False, indent=2)
+    if JANELA is not None:
+        try:
+            JANELA.estado = estado
+            JANELA.aba_importar.info = None
+        except Exception:
+            pass
+    rel["resumo"] = importacao.resumo(rel)
+    return rel
+
+
 def estrutura_servicos(p, plano, pasta):
     from . import estrutura
     return estrutura.servicos_do_arquivo(p, plano) or _estado(pasta).get("servicos", [])
 
 
 TOOLS = {
+    "planos_importar_ligar": planos_importar_ligar,
+    "planos_importar": planos_importar,
     "planos_frota": planos_frota,
     "planos_adequar_frota": planos_adequar_frota,
     "planos_validar": planos_validar,

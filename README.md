@@ -24,7 +24,16 @@ contrato pede, a partir do edital e das especificações técnicas:
    campos com domínio), sem apagar nada e com cópia de segurança. Campos com **valor padrão**
    no perfil recebem esse valor nos registros vazios (ex.: `ciclo` e `flag_semana` = 0, pois só
    valem para coleta quinzenal/mensal e os circuitos semanais ficam zerados).
-5. **Frota e equipe** — adequa o plano já feito à frota e ao pessoal do edital novo (seções
+5. **Trazer dados** — copia uma camada sua (shapefile, GeoPackage, .gdb, GeoJSON, KML, CSV…)
+   para uma camada do plano, ou para um **plano novo** vazio (.gdb/.gpkg) criado do perfil. A
+   camada de destino é escolhida pela geometria e pelos campos; os campos são ligados pelo nome
+   e o **Claude sugere o resto** (nomes abreviados, valores por extenso). Nos campos com domínio,
+   cada valor da origem é ligado a um código do contrato ("SOBRADINHO" → 5). Na cópia, os tipos
+   são convertidos (Sim/Não → 1/0, hora em texto, decimal com vírgula), entram o valor fixo e o
+   valor padrão do perfil, e a geometria é reprojetada e ajustada (polígono → multipolígono).
+   *Prévia* mostra o que vai acontecer sem gravar; *Importar* acrescenta ou substitui, com
+   cópia de segurança. A ligação fica salva para a próxima vez.
+6. **Frota e equipe** — adequa o plano já feito à frota e ao pessoal do edital novo (seções
    *recursos* e *equipes* do perfil). Compara veículos (pico por dia e turno) e pessoal
    (veículos × equipe padrão) com o edital e propõe como caber: troca o equipamento que o
    edital não tem pelo mais parecido com sobra e tira circuitos — **juntando** a um vizinho ou
@@ -32,7 +41,7 @@ contrato pede, a partir do edital e das especificações técnicas:
    carga mais equilibrada, entre circuitos do mesmo equipamento, turno e dias. Grava numa
    cópia (`<plano>_adequado.gdb`); relatório em .xlsx. Sem roteirização: a ordem de passagem
    dos circuitos que receberam linhas deve ser revista.
-6. **Validar** — confere o plano contra o perfil: camadas, geometria, sistema, campos, tipos,
+7. **Validar** — confere o plano contra o perfil: camadas, geometria, sistema, campos, tipos,
    tamanhos, obrigatórios vazios, valores fora do domínio e geometrias inválidas. Clique duplo
    seleciona as feições no mapa; relatório em .xlsx.
 

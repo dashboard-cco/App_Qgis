@@ -193,8 +193,8 @@ try:
     titulos = [jan.arv_perfil.topLevelItem(i).text(0)
                for i in range(jan.arv_perfil.topLevelItemCount())] \
         if hasattr(jan, "arv_perfil") else []
-    check(jan.abas.tabText(4) == "5. Frota e equipe" and jan.abas.tabText(5) == "6. Validar",
-          "abas 5 e 6")
+    check(jan.abas.tabText(5) == "6. Frota e equipe" and jan.abas.tabText(6) == "7. Validar",
+          "abas 6 e 7")
     jan.estado["planos"] = [cc]
     jan.aba_plano.atualizar()
     a = jan.aba_frota
