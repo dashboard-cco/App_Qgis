@@ -107,6 +107,14 @@ SPECS = {
                                 "description": "redimensionar ao máximo para caber no edital "
                                                "(padrão: o escolhido na aba; precisa do "
                                                "histórico)"},
+              "fechar": {"type": "boolean",
+                         "description": "fechar a frota do edital com horas a mais: o turno que "
+                                        "passa dos veículos fecha no número do edital e cada "
+                                        "circuito vai até jornada_max; as horas a mais voltam "
+                                        "em 'horas_a_mais' (padrão: o escolhido na aba)"},
+              "jornada_max": {"type": "number",
+                              "description": "limite por circuito ao fechar a frota, em horas "
+                                             "(padrão 8.8333 = 8h50)"},
               "aplicar": {"type": "boolean", "description": "gravar numa cópia do plano"},
               "saida": _s("opcional: caminho da cópia")}, ["plano"])),
     "planos_o_que_falta": (

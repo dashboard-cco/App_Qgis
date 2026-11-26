@@ -122,6 +122,26 @@ class AbaFrota(QWidget):
             "mesmo turno, depois no outro turno); os circuitos acima da jornada passam linhas do "
             "mesmo jeito. O que não couber vira 'Pontos para levar ao órgão'.")
         lay.addWidget(self.ck_maximo)
+        linha = QHBoxLayout()
+        self.ck_fechar = QCheckBox("Fechar a frota do edital com horas a mais, até")
+        self.ck_fechar.setToolTip(
+            "Com o histórico: o turno que ainda passa dos veículos do edital (ex.: noturno) "
+            "fecha no número do edital — os circuitos tirados são repartidos entre os "
+            "vizinhos, que trabalham até este limite (já com a 2ª viagem). As horas acima da "
+            "jornada do edital ficam especificadas por circuito (falta de caminhões) e o "
+            "horário de término real é gravado na cópia.")
+        linha.addWidget(self.ck_fechar)
+        from qgis.PyQt.QtCore import QTime
+        from qgis.PyQt.QtWidgets import QTimeEdit
+        self._QTime = QTime
+        self.sp_jmax = QTimeEdit()
+        self.sp_jmax.setDisplayFormat("H'h'mm")
+        self.sp_jmax.setTimeRange(QTime(7, 0), QTime(14, 0))
+        self.sp_jmax.setTime(QTime(8, 50))
+        self.sp_jmax.setToolTip("Horas por circuito (jornada com as horas a mais).")
+        linha.addWidget(self.sp_jmax)
+        linha.addStretch()
+        lay.addLayout(linha)
 
         linha = QHBoxLayout()
         linha.addWidget(QLabel("Adequar:"))
@@ -210,6 +230,9 @@ class AbaFrota(QWidget):
         self.ck_desd.setChecked(bool(op.get("desdobrar")))
         self.ed_base.setText(op.get("base", ""))
         self.ck_maximo.setChecked(op.get("maximo", True))
+        self.ck_fechar.setChecked(bool(op.get("fechar")))
+        jm = int(round(float(op.get("jornada_max") or 8 + 50 / 60) * 60))
+        self.sp_jmax.setTime(self._QTime(jm // 60, jm % 60))
 
     def _opcoes(self):
         """Lê e salva no contrato: ({codigo: equip}, base para desdobrar ou '', equip)."""
@@ -217,7 +240,9 @@ class AbaFrota(QWidget):
               "equipar_equip": self.cb_equipar.currentData(),
               "desdobrar": self.ck_desd.isChecked(), "base": self.ed_base.text().strip(),
               "desdobrar_equip": self.cb_desd.currentData(),
-              "maximo": self.ck_maximo.isChecked()}
+              "maximo": self.ck_maximo.isChecked(), "fechar": self.ck_fechar.isChecked(),
+              "jornada_max": round(self.sp_jmax.time().hour()
+                                   + self.sp_jmax.time().minute() / 60, 4)}
         if self.j.estado is not None and self.j.estado.get("frota_opcoes") != op:
             self.j.estado["frota_opcoes"] = op
             self.j._salvar_estado()
@@ -225,7 +250,7 @@ class AbaFrota(QWidget):
         cods = [c for c in re.split(r"[\s,;]+", op["equipar"]) if c]
         equipar = {c: op["equipar_equip"] for c in cods} if op["equipar_equip"] else {}
         base = op["base"] if op["desdobrar"] else ""
-        return equipar, base, op["desdobrar_equip"], op["maximo"]
+        return equipar, base, op["desdobrar_equip"], op["maximo"],             (op["jornada_max"] if op["fechar"] else None)
 
     # ------------------------------------------------------------ histórico e jornada
     def _hist_arquivo(self):
@@ -370,7 +395,7 @@ class AbaFrota(QWidget):
         subst = {k: "" for k in self.recusadas}
         hor, mud = self.ck_horarios.isChecked(), self.ck_turno.isChecked()
         arq_hist, cache = self._hist_arquivo(), self._hist_cache()
-        equipar, base, eq_desd, maximo = self._opcoes()
+        equipar, base, eq_desd, maximo, jmax = self._opcoes()
         if self.ck_desd.isChecked() and not base:
             QMessageBox.information(self, "Propor", "Diga de qual base (DL) saem os circuitos "
                                     "novos do desdobramento, ex.: Sobradinho.")
@@ -390,7 +415,9 @@ class AbaFrota(QWidget):
                                 max_receptores=rec, outra_regiao=outra, substituicoes=subst,
                                 historico=hist, horarios=hor, mudar_turno=mud,
                                 equipar=equipar, desdobrar=base, equip_desdobrar=eq_desd,
-                                redimensionar=maximo and bool(hist))
+                                redimensionar=maximo and bool(hist),
+                                fechar=bool(jmax) and bool(hist),
+                                jornada_max=jmax or 8 + 50 / 60)
 
         def fim(exc, res=None):
             self.j._ocupado(False)
@@ -541,6 +568,20 @@ class AbaFrota(QWidget):
                 QTreeWidgetItem(g, [f"{ic} {h['nome']} · {h['turno']} · {h['dia']}",
                                     f"precisa {hh(h['horas'])} em {h['circuitos']} circuitos · "
                                     f"edital {hh(h['capacidade'])} · saldo {hh(h['saldo'])}"])
+        if r.get("horas_a_mais"):
+            ha = r["horas_a_mais"]
+            g = QTreeWidgetItem(self.arv, [f"⏱ Horas a mais por falta de caminhões ({len(ha)})",
+                                           f"turno fechado até {hh(r['jornada_max'])} · horas "
+                                           f"acima de {hh(r['jornada'])} em cada circuito"])
+            for a in ha:
+                it = QTreeWidgetItem(g, [f"{a['circuito']} — {hh(a['tempo'])} "
+                                         f"(+{hh(a['horas_a_mais'])})",
+                                         f"{a['nome_equip']} · {a['turno']} {a['inicio']}–"
+                                         f"{a['fim']} · {', '.join(a['dias'])} · "
+                                         f"{a['viagens']} viagem(ns)"
+                                         + (" · ⚠ acima do limite" if a["tempo"] > a["limite"]
+                                            + 1e-6 else "")])
+                it.setData(0, _PAPEL, ("lista", [a["circuito"]]))
         if r.get("pontos"):
             g = QTreeWidgetItem(self.arv, [f"📋 Pontos para levar ao órgão ({len(r['pontos'])})",
                                            "o que não coube no edital e o que precisa de aceite "

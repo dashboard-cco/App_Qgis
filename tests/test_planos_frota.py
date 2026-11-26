@@ -306,6 +306,31 @@ try:
     xm = F.relatorio_xlsx(pm, os.path.join(tmp, "frota_max.xlsx"))
     check("Pontos para o órgão" in load_workbook(xm).sheetnames, "xlsx com pontos para o órgão")
 
+    # ------------------------------------------------------------ fechar a frota com horas a mais
+    # (o histórico sintético já cabe; força um edital menor no noturno para testar)
+    import copy
+    p_f = copy.deepcopy(p)
+    for r_ in p_f.get("recursos") or []:
+        if r_["categoria"] != "pessoal" and (r_.get("noturno") or 0) >= 10:
+            r_["noturno"] = int(r_["noturno"]) - 4
+    pf = F.propor(p_f, cc, historico=h, redimensionar=True, fechar=True)
+    lin_n = next(l for l in pf["depois"] if l["categoria"] == "equipamento"
+                 and l["codigo"] == "0" and l["turno"] == "Noturno")
+    check(lin_n["plano"] <= lin_n["edital"], f"noturno fechado no edital: {lin_n}")
+    check(pf["horas_a_mais"] and all(a["horas_a_mais"] > 0 and a["fim"] != "?"
+                                     for a in pf["horas_a_mais"]), "horas a mais especificadas")
+    check(any(o.get("fechar") for o in pf["operacoes"]), "operações de fechar")
+    check(any(x["tema"] == "Horas a mais por falta de caminhões" for x in pf["pontos"]),
+          "ponto de horas a mais para o órgão")
+    gf = F.aplicar(p_f, cc, pf, os.path.join(tmp, "CC01_fechar.gdb"))
+    cf, _, _ = F.ler_circuitos(gf["saida"])
+    pcf = {c["codigo"]: c for c in cf}
+    a0 = pf["horas_a_mais"][0]
+    check(gf["horas_a_mais"] == len(pf["horas_a_mais"]) and
+          F._hm(pcf[a0["circuito"]]["fim"]) == a0["fim"], f"término real gravado: {a0}")
+    xf = F.relatorio_xlsx(pf, os.path.join(tmp, "frota_fechar.xlsx"))
+    check("Horas a mais" in load_workbook(xf).sheetnames, "xlsx com horas a mais")
+
     # ------------------------------------------------------------ CS01: troca de equipamento
     rs = F.propor(p, cs)
     t = [x for x in rs["trocas"] if x["de"] == "4"]
@@ -401,6 +426,9 @@ try:
     a.proposta = pm
     a._mostrar()
     check(grupo("📋 Pontos para levar ao órgão") is not None, "árvore com pontos para o órgão")
+    a.proposta = pf
+    a._mostrar()
+    check(grupo("⏱ Horas a mais por falta de caminhões") is not None, "árvore com horas a mais")
     a.proposta = pd_
     a._mostrar()
     novos_g = grupo("Circuitos novos")
@@ -411,7 +439,12 @@ try:
     a.ck_desd.setChecked(True)
     a.ed_base.setText("Sobradinho")
     check(a.ck_maximo.isChecked(), "redimensionar ao máximo marcado por padrão")
-    eqp, base, eqd, mx = a._opcoes()
+    check(not a.ck_fechar.isChecked() and a.sp_jmax.time().toString("H:mm") == "8:50",
+          "fechar desmarcado por padrão, limite 8h50")
+    a.ck_fechar.setChecked(True)
+    eqp, base, eqd, mx, jm = a._opcoes()
+    check(abs(jm - 8.8333) < 0.001 and jan.estado["frota_opcoes"]["fechar"] is True,
+          "fechar salvo no contrato")
     check(eqp == {"182501": "1", "182502": "1"} and base == "Sobradinho" and eqd == "1" and mx
           and jan.estado["frota_opcoes"]["maximo"] is True
           and jan.estado["frota_opcoes"]["base"] == "Sobradinho", "opções salvas no contrato")

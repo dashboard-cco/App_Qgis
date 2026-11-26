@@ -59,6 +59,12 @@ contrato pede, a partir do edital e das especificações técnicas:
      repartindo as linhas entre até 8 vizinhos a até 5 km, enchendo cada um até 7h20 —
      primeiro no mesmo turno, depois no outro turno —, e os circuitos acima da jornada
      passam linhas do mesmo jeito;
+   - **fechar a frota com horas a mais** (opcional, ex.: até 8h50): o turno que ainda passa
+     dos veículos do edital fecha no número do edital — os circuitos tirados são repartidos
+     entre os vizinhos (já com a 2ª viagem ao destino) e um equilíbrio passa linhas do mais
+     carregado ao vizinho até baixar o maior tempo. As horas acima de 7h20 ficam
+     **especificadas por circuito** (aba *Horas a mais*: início, término real, horas a mais,
+     viagens — "falta de caminhões") e o término real é gravado na cópia;
    - **pontos para levar ao órgão**: o que não coube (horas que faltam por dia, veículos e
      pessoal a mais, circuitos acima da jornada) e o que a proposta mudou e precisa de aceite
      (áreas que mudam de turno ou de frequência, circuitos mistos novos, ordem de passagem),

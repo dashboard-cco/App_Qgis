@@ -222,7 +222,8 @@ def planos_frota(plano):
 def planos_adequar_frota(plano, metodo="auto", distancia=1500, max_receptores=3,
                          outra_regiao=False, aplicar=False, saida="", historico="",
                          horarios=True, mudar_turno=True, equipar=None, desdobrar=None,
-                         equip_desdobrar="", redimensionar=None):
+                         equip_desdobrar="", redimensionar=None, fechar=None,
+                         jornada_max=None):
     """Proposta (ou gravação numa cópia) para o plano ficar como o edital pede: horários,
     turnos, frota e — com histórico de operação — jornada e desdobramento."""
     from . import frota
@@ -251,15 +252,20 @@ def planos_adequar_frota(plano, metodo="auto", distancia=1500, max_receptores=3,
     equip_desdobrar = equip_desdobrar or op.get("desdobrar_equip") or None
     if redimensionar is None:
         redimensionar = op.get("maximo", True)
+    if fechar is None:
+        fechar = bool(op.get("fechar"))
+    jornada_max = float(jornada_max or op.get("jornada_max") or 8 + 50 / 60)
     pr = frota.propor(p, plano, srv, metodo=metodo, distancia=float(distancia),
                       max_receptores=int(max_receptores), outra_regiao=bool(outra_regiao),
                       historico=hist, horarios=bool(horarios), mudar_turno=bool(mudar_turno),
                       equipar=equipar, desdobrar=desdobrar or "",
                       equip_desdobrar=equip_desdobrar,
-                      redimensionar=bool(redimensionar) and hist is not None)
+                      redimensionar=bool(redimensionar) and hist is not None,
+                      fechar=bool(fechar) and hist is not None, jornada_max=jornada_max)
     resumo = {k: pr[k] for k in ("plano", "servicos", "lote", "cabe", "nao_coube", "depois",
                                  "jornada", "historico", "horarios", "mudancas_turno",
-                                 "acima_jornada", "equipados", "pontos")}
+                                 "acima_jornada", "equipados", "pontos",
+                                 "horas_a_mais", "jornada_max")}
     resumo["desdobramentos"] = [{k: v for k, v in nv.items() if k != "origens"}
                                 | {"origens": [{k: o[k] for k in ("circuito", "inteiro", "turno",
                                                                   "km", "tempo_antes",

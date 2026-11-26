@@ -747,7 +747,8 @@ def propor(p, caminho, servicos=None, lote=None, folga=60, mapa=None, metodo="au
            distancia=1500.0, max_receptores=3, mesma_regiao=True, outra_regiao=False,
            substituicoes=None, historico=None, jornada=None, horarios=True, mudar_turno=True,
            equipar=None, desdobrar="", equip_desdobrar=None, distancia_desdobrar=8000.0,
-           redimensionar=False, distancia_max=5000.0, max_receptores_max=8):
+           redimensionar=False, distancia_max=5000.0, max_receptores_max=8,
+           fechar=False, jornada_max=8 + 50 / 60):
     """Proposta para o plano ficar como o edital pede (nada é gravado).
 
     Etapas:
@@ -771,12 +772,19 @@ def propor(p, caminho, servicos=None, lote=None, folga=60, mapa=None, metodo="au
          circuitos inteiros repartindo as linhas entre até 'max_receptores_max' vizinhos a até
          'distancia_max' m, enchendo cada um até a jornada — primeiro no mesmo turno, depois
          no outro turno (a coleta domiciliar não é presa a um turno) —, e os circuitos acima
-         da jornada passam linhas do mesmo jeito.
+         da jornada passam linhas do mesmo jeito;
+      7. fechar=True: o turno que ainda passa dos veículos do edital fecha com horas a mais —
+         tira circuitos e reparte as linhas entre os vizinhos do mesmo turno até 'jornada_max'
+         (padrão 8h50, já com a 2ª viagem). As horas acima da jornada do edital ficam
+         especificadas por circuito em 'horas_a_mais' (por falta de caminhões).
     equipar={codigo: equipamento}: passa estes circuitos para outro equipamento antes de tudo
     (ex.: o munk da DL Sul faz o Noroeste: {"182501": "1", "182502": "1"}).
     metodo: "auto" (o que equilibra melhor), "juntar" ou "dividir".
     outra_regiao=True: em último caso, aceita vizinho de outra região (campo de região)."""
     servicos, lote, circ, mapa, avisos, nomes, rec = _contexto(p, caminho, servicos, lote, mapa)
+    for c in circ:
+        for ln in c["linhas"]:
+            ln.setdefault("dias0", list(c["dias"]))
     tur = turnos_edital(p, servicos)
     padrao = jornada or 7 + 20 / 60
     codigos_plano = {c["codigo"]: c.get("servico", "") for c in circ}
@@ -972,17 +980,37 @@ def propor(p, caminho, servicos=None, lote=None, folga=60, mapa=None, metodo="au
         else:
             ops += _redimensionar(circ, rec, nomes, folga, lim, por_cod, distancia_max,
                                   max_receptores_max)
+    # 7) fechar a frota com horas a mais (por falta de caminhões)
+    fechados = set()
+    if fechar:
+        if not lim:
+            avisos.append("Fechar a frota com horas a mais precisa do histórico de operação.")
+        else:
+            o7, fechados = _fechar_frota(circ, rec, nomes, folga, lim, por_cod, jornada_max)
+            ops += o7
+
+    def jlim(eq, t):
+        return max(jornada_max, jfn(eq, t)) if (eq, t) in fechados else jfn(eq, t)
     for e in equipados:
         c = por_codigo[e["circuito"]]
         e["inicio"], e["fim"] = _hm(c["ini"]), _hm(c["fim"])
 
     # resultado
-    acima = [{"circuito": c["codigo"], "equip": c["equip"], "nome_equip": nomes.get(c["equip"],
-                                                                                   c["equip"]),
-              "turno": c["turno"], "tempo": round(c["t"], 2),
-              "jornada": round(jfn(c["equip"], c["turno"]), 2),
-              "dias": [DIAS[i] for i, s in enumerate(c["dias"]) if s]}
-             for c in circ if c["t"] is not None and c["t"] > jfn(c["equip"], c["turno"]) + 1e-6]
+    def _reg(c):
+        j = jfn(c["equip"], c["turno"])
+        return {"circuito": c["codigo"], "equip": c["equip"],
+                "nome_equip": nomes.get(c["equip"], c["equip"]), "turno": c["turno"],
+                "tempo": round(c["t"], 2), "jornada": round(j, 2),
+                "horas_a_mais": round(c["t"] - j, 2), "limite": round(jlim(c["equip"], c["turno"]), 2),
+                "viagens": c.get("viag"), "inicio": _hm(c["ini"]),
+                "fim": _hm((c["ini"] or 0) + 60 + round(c["t"] * 60)) if c["ini"] is not None
+                else "?",
+                "dias": [DIAS[i] for i, s in enumerate(c["dias"]) if s]}
+    horas_a_mais = sorted([_reg(c) for c in circ if c["t"] is not None
+                           and c["t"] > jfn(c["equip"], c["turno"]) + 1e-6],
+                          key=lambda a: -a["horas_a_mais"]) if fechados else []
+    acima = [_reg(c) for c in circ if c["t"] is not None
+             and c["t"] > jlim(c["equip"], c["turno"]) + 1e-6]
     acima.sort(key=lambda a: -(a["tempo"] - a["jornada"]))
     horas_depois = horas_por_dia(circ, rec, nomes, jfn) if historico else []
     for (eq, t), n in sorted(_excessos(circ, rec, folga).items(), key=lambda kv: str(kv[0])):
@@ -999,13 +1027,16 @@ def propor(p, caminho, servicos=None, lote=None, folga=60, mapa=None, metodo="au
             txt += "sem circuitos vizinhos compatíveis (mesmo turno e dias)."
         nao_coube.append(txt)
     if acima:
-        nao_coube.append(f"Jornada · {len(acima)} circuito(s) ainda acima da jornada do edital — "
-                         "sem vizinho com folga para receber as linhas.")
+        nao_coube.append(f"Jornada · {len(acima)} circuito(s) ainda acima da jornada do edital"
+                         + (f" (noturno/turno fechado: acima de {historico_hhmm(jornada_max)})"
+                            if fechados else "")
+                         + " — sem vizinho com folga para receber as linhas.")
     depois, _ = _tabela(circ, rec, nomes, folga)
     res = {"plano": os.path.normpath(caminho), "servicos": servicos, "lote": lote,
             "mapa": mapa, "folga": folga, "metodo": metodo, "trocas": trocas, "operacoes": ops,
             "horarios": mud_horario, "mudancas_turno": mud_turno, "acima_jornada": acima,
             "equipados": equipados, "desdobramentos": novos,
+            "horas_a_mais": horas_a_mais, "jornada_max": round(jornada_max, 4) if fechados else None,
             "acima_jornada_antes": acima_antes,
             "horas_antes": horas_antes, "horas_depois": horas_depois,
             "historico": ({k: historico[k] for k in ("arquivo", "periodo", "rds")}
@@ -1072,6 +1103,23 @@ def _pontos_orgao(r, nomes, jornada):
                                     f"edital dá {l['edital']} (veículos × equipe padrão).",
                         "proposta": "Acompanha a frota: resolve junto com os veículos a mais.",
                         "circuitos": []})
+    if r.get("horas_a_mais"):
+        ha = r["horas_a_mais"]
+        por_dia = defaultdict(float)
+        for x in ha:
+            for d in x["dias"]:
+                por_dia[d] += x["horas_a_mais"]
+        pts.append({"tema": "Horas a mais por falta de caminhões",
+                    "situacao": f"Para caber nos veículos do edital, {len(ha)} circuito(s) "
+                                f"trabalham além de {hhmm(jornada)} (até "
+                                f"{hhmm(max(x['tempo'] for x in ha))}; o turno fechado vai até "
+                                f"{hhmm(r['jornada_max'])} com a 2ª viagem). Horas a mais por "
+                                "dia: " + "; ".join(f"{d} {hhmm(v)}" for d, v in por_dia.items())
+                                + ".",
+                    "proposta": "Pagar as horas a mais (ou banco de horas) até o órgão liberar "
+                                "os caminhões que faltam; cada circuito tem as horas "
+                                "especificadas na aba 'Horas a mais'.",
+                    "circuitos": [x["circuito"] for x in ha]})
     if r.get("acima_jornada"):
         a = r["acima_jornada"]
         pts.append({"tema": "Circuitos acima da jornada",
@@ -1496,6 +1544,188 @@ def _redimensionar(circ, rec, nomes, folga, lim, por_cod, distancia, max_recepto
     return ops
 
 
+# ------------------------------------------------------------ fechar a frota com horas a mais
+def _forcar(x, viz, cap, k=4):
+    """Cada linha de x vai, entre os k vizinhos mais perto dela, para o que fica com o menor
+    tempo depois de receber (sem limite de jornada)."""
+    frac = defaultdict(float)
+    partes = defaultdict(list)
+    for i, ln in enumerate(x["linhas"]):
+        f = ln["km"] / x["carga"]
+        perto = sorted(viz, key=lambda v: _dist(ln["geom"], v["geom"]))[:k]
+        v = min(perto, key=lambda v: _apos_receber(v, x, frac[v["codigo"]] + f, cap)["t"])
+        frac[v["codigo"]] += f
+        partes[v["codigo"]].append(i)
+    return dict(partes)
+
+
+_ALT = ([True, False, True, False, True, False, False], [False, True, False, True, False, True, False])
+
+
+def _atende(dl, dv):
+    """O circuito de dias dv pode ficar com uma linha coletada nos dias dl? Sim se roda em
+    todos eles, ou se as duas são alternadas (Seg/Qua/Sex <-> Ter/Qui/Sáb: a área continua
+    3 vezes por semana, só troca os dias)."""
+    dl, dv = list(dl), list(dv)
+    return all(v or not d for d, v in zip(dl, dv)) or (dl in _ALT and dv in _ALT)
+
+
+def _equilibrar(circ, alvo, lim, por_cod, nomes, distancia, it_max=600):
+    """Baixa o maior tempo do turno: o circuito mais carregado passa uma linha por vez ao
+    vizinho (que atende os dias originais da linha) enquanto isso diminui o maior tempo dos
+    dois. Junta as linhas passadas do mesmo circuito para o mesmo vizinho numa operação."""
+    cap, _ = lim
+    movidos = []                         # [(x, v, linhas, t_x antes, t_v antes)] em ordem
+    for _ in range(it_max):
+        cs = [c for c in circ if (c["equip"], c["turno"]) in alvo and not c.get("novo")
+              and _tem_tempo(c) and c["linhas"] and c["carga"] > 0]
+        if len(cs) < 2:
+            break
+        cs.sort(key=lambda c: -c["t"])
+        melhor = None
+        for x in cs[:3]:
+            viz = [v for v in cs if v is not x and _dist(x["geom"], v["geom"]) <= distancia]
+            for i, ln in enumerate(x["linhas"]):
+                dl = ln.get("dias0") or x["dias"]
+                f = ln["km"] / x["carga"]
+                if f >= 0.5:
+                    continue
+                tx = _apos_perder(x, f, cap)["t"]
+                for v in sorted([v for v in viz if _atende(dl, v["dias"])],
+                                key=lambda v: _dist(ln["geom"], v["geom"]))[:3]:
+                    nv = _apos_receber(v, x, f, cap)["t"]
+                    m = max(tx, nv)
+                    if m < x["t"] - 0.02 and (melhor is None or m < melhor[0]):
+                        melhor = (m, x, i, v)
+            if melhor:
+                break
+        if not melhor:
+            break
+        _, x, i, v = melhor
+        if not movidos or movidos[-1][:2] != (x["codigo"], v["codigo"]):
+            movidos.append((x["codigo"], v["codigo"], [], x["t"], v["t"]))
+        ln = x["linhas"][i]
+        f = ln["km"] / x["carga"]
+        v.update(_apos_receber(v, x, f, cap))
+        x.update(_apos_perder(x, f, cap))
+        v["linhas"].append(ln)
+        v["carga"] += ln["km"]
+        x["linhas"].pop(i)
+        x["carga"] -= ln["km"]
+        if x["geom"] is not None and ln["geom"] is not None:
+            from shapely.ops import unary_union
+            pd = x["geom"].intersection(ln["geom"].buffer(30))
+            if not pd.is_empty and pd.area >= 1:
+                x["geom"] = x["geom"].difference(pd)
+                v["geom"] = pd if v["geom"] is None else unary_union([v["geom"].buffer(0),
+                                                                      pd.buffer(0)])
+        movidos[-1][2].append(ln)
+        if list(ln.get("dias0") or x["dias"]) != list(v["dias"]) and                 not all(dv or not d for d, dv in zip(ln.get("dias0") or x["dias"], v["dias"])):
+            ln["troca_dias"] = True
+    ops = []
+    for cx, cv, lns, tx0, tv0 in movidos:
+        x, v = por_cod[cx], por_cod[cv]
+        km = sum(l["km"] for l in lns)
+        ops.append({"tipo": "aliviar", "fechar": True, "equilibrar": True, "circuito": cx,
+                    "equip": x["equip"], "nome_equip": nomes.get(x["equip"], x["equip"]),
+                    "turno": x["turno"], "dias": [DIAS[i] for i, s in enumerate(x["dias"]) if s],
+                    "carga": round(x["carga"] + km, 2), "tempo": round(tx0, 2),
+                    "tempo_depois": round(x["t"], 2), "carga_depois": round(x["carga"], 2),
+                    "recebem": [{"codigo": cv, "linhas": [(l["camada"], l["fid"]) for l in lns],
+                                 "km": round(km, 2), "carga_depois": round(v["carga"], 2),
+                                 "dias_a_mais": [], "outra_regiao": v["regiao"] != x["regiao"],
+                                 "troca_dias": sum(1 for l in lns if l.get("troca_dias")),
+                                 "dias_novos": [DIAS[i] for i, s in enumerate(v["dias"]) if s],
+                                 "turno": v["turno"], "tempo_antes": round(tv0, 2),
+                                 "tempo_depois": round(v["t"], 2)}]})
+    return ops
+
+
+def _fechar_frota(circ, rec, nomes, folga, lim, por_cod, jmax, distancias=(5000, 15000, 30000),
+                  max_receptores=8):
+    """Fecha a frota do edital no turno que ainda passa dela, com horas a mais: tira circuitos
+    e reparte as linhas entre os vizinhos do mesmo turno (que rodam nos mesmos dias) até
+    'jmax' por circuito (já contando a 2ª viagem); se não couber, manda cada linha ao vizinho
+    que fica com o menor tempo. Depois alivia quem passou de 'jmax'. Devolve (ops, alvo)."""
+    cap, jfn = lim
+    alvo = set(_excessos(circ, rec, folga))
+    if not alvo:
+        return [], alvo
+
+    def jf2(eq, t):
+        return max(jmax, jfn(eq, t)) if (eq, t) in alvo else jfn(eq, t)
+    lim2 = (cap, jf2)
+    ops = []
+    while True:
+        exc = _excessos(circ, rec, folga)
+        exc = {k: v for k, v in exc.items() if k in alvo}
+        if not exc:
+            break
+        nec = necessidade(circ, folga)["por_dia"]
+        dias_exc = {k: {d for (d, e, tt), n in nec.items()
+                        if (e, tt) == k and n > rec["equip"][k[0]].get(k[1], 0)} for k in exc}
+        cands = [x for x in circ if (x["equip"], x["turno"]) in exc and not x.get("novo")
+                 and _tem_tempo(x) and x["linhas"] and x["carga"] > 0
+                 and any(x["dias"][d] for d in dias_exc[(x["equip"], x["turno"])])]
+        # primeiro os alternados (os diários só recebem de diários) e os de menor tempo
+        cands.sort(key=lambda x: (sum(x["dias"]), x["t"]))
+        feito = None
+        for x in cands:
+            viz_todos = [v for v in circ if v is not x and not v.get("novo")
+                         and v["equip"] == x["equip"] and v["turno"] == x["turno"]
+                         and _tem_tempo(v)
+                         and all(dv or not dx for dx, dv in zip(x["dias"], v["dias"]))]
+            for dist in distancias:
+                viz = [v for v in viz_todos if _dist(x["geom"], v["geom"]) <= dist]
+                if not viz:
+                    continue
+                # primeiro os de mesmos dias (não aumenta a frequência da área)
+                viz.sort(key=lambda v: (v["dias"] != x["dias"], _dist(x["geom"], v["geom"])))
+                esc = viz[:max_receptores]
+                ordem = sorted(range(len(x["linhas"])),
+                               key=lambda i: min(_dist(x["linhas"][i]["geom"], v["geom"])
+                                                 for v in esc))
+                partes = _distribuir(x, ordem, esc, lim2)
+                if partes:
+                    feito = (x, partes)
+                    break
+            if feito:
+                break
+        if not feito and cands:
+            # ninguém cabe até jmax: o mais fácil vai para quem fica com menos tempo
+            for x in cands:
+                viz = [v for v in circ if v is not x and not v.get("novo")
+                       and v["equip"] == x["equip"] and v["turno"] == x["turno"]
+                       and _tem_tempo(v)
+                       and all(dv or not dx for dx, dv in zip(x["dias"], v["dias"]))
+                       and _dist(x["geom"], v["geom"]) <= distancias[-1]]
+                if viz:
+                    mesmos = [v for v in viz if v["dias"] == x["dias"]]
+                    feito = (x, _forcar(x, mesmos or viz, cap))
+                    break
+        if not feito:
+            break
+        x, partes = feito
+        tipo = "juntar" if len(partes) == 1 else "dividir"
+        ops.append(_executar_op(tipo, x, partes, por_cod, nomes, cap, lim))
+        ops[-1]["fechar"] = True
+        circ.remove(x)
+        por_cod.pop(x["codigo"], None)
+    ops += _equilibrar(circ, alvo, lim, por_cod, nomes, distancias[1])
+    # quem passou de jmax passa linhas a vizinhos (mesmo turno e depois o outro) até jmax
+    for x in sorted([c for c in circ if (c["equip"], c["turno"]) in alvo and c.get("t")
+                     and c["t"] > jf2(c["equip"], c["turno"]) + 1e-6], key=lambda c: -c["t"]):
+        for turnos in _turnos_receber(x, rec):
+            if x["t"] <= jf2(x["equip"], x["turno"]) + 1e-6:
+                break
+            viz = _receptores_max(x, circ, lim2, distancias[1], turnos)
+            partes = _aliviar(x, viz, lim2)
+            if partes:
+                ops.append(_executar_op("aliviar", x, partes, por_cod, nomes, cap, lim2))
+                ops[-1]["fechar"] = True
+    return ops, alvo
+
+
 def _executar_op(tipo, x, partes, por_cod, nomes, cap, lim):
     """Registra a operação e simula: linhas, carga, tempos e polígonos de quem recebe."""
     recebe = []
@@ -1890,13 +2120,22 @@ def aplicar(p, caminho, proposta, saida=None):
     for nv in proposta.get("desdobramentos") or []:
         n_novos += _gravar_novo(ds, lyr, mapa, nv, por_cod, campo_cod, bruto, gravar_campo,
                                 gravar_hora, avisos)
+    # 5) horas a mais (frota fechada): término real = início + refeição + tempo
+    n_extra = 0
+    if proposta.get("jornada_max"):
+        for a in proposta.get("horas_a_mais") or []:
+            c = por_cod.get(a["circuito"])
+            if c is None or c.get("fid") is None or a["fim"] == "?":
+                continue
+            gravar_hora(c["fid"], mapa["fim"], _minutos(a["fim"]))
+            n_extra += 1
     ds.FlushCache()
     ds = None
     if proposta.get("operacoes") or n_novos:
         avisos.append("Sem roteirização: revise a ordem de passagem e os pontos de início/fim "
                       "dos circuitos que receberam linhas e dos circuitos novos.")
     return {"saida": os.path.normpath(saida), "trocas": n_trocas, "horarios": n_horarios,
-            "mudancas_turno": n_turno, "novos": n_novos,
+            "mudancas_turno": n_turno, "novos": n_novos, "horas_a_mais": n_extra,
             "operacoes": len(proposta.get("operacoes") or []), "avisos": avisos}
 
 
@@ -2094,6 +2333,18 @@ def relatorio_xlsx(proposta, caminho_xlsx):
         for a in proposta["acima_jornada"]:
             wa.append([a["circuito"], a["nome_equip"], a["turno"], ", ".join(a["dias"]),
                        a["tempo"], a["jornada"], round(a["tempo"] - a["jornada"], 2)])
+    if proposta.get("horas_a_mais"):
+        wx = wb.create_sheet("Horas a mais")
+        cab(wx, ["Circuito", "Equipamento", "Turno", "Dias", "Início", "Término real",
+                 "Tempo (h)", "Jornada do edital (h)", "Horas a mais (h)", "Viagens",
+                 "Limite aceito (h)", "Motivo"],
+            (12, 40, 10, 40, 8, 12, 10, 20, 16, 9, 16, 34))
+        for a in proposta["horas_a_mais"]:
+            wx.append([a["circuito"], a["nome_equip"], a["turno"], ", ".join(a["dias"]),
+                       a["inicio"], a["fim"], a["tempo"], a["jornada"], a["horas_a_mais"],
+                       a["viagens"], a["limite"], "falta de caminhões no edital"])
+            if a["tempo"] > a["limite"] + 1e-6:
+                wx.cell(wx.max_row, 9).font = Font(bold=True, color="C00000")
     if proposta.get("pontos"):
         wp = wb.create_sheet("Pontos para o órgão")
         cab(wp, ["Tema", "Situação", "Proposta", "Circuitos"], (34, 90, 60, 60))
