@@ -738,6 +738,11 @@ class DialogoCriarTodos(QDialog):
         self.bt_ocr.clicked.connect(self._ler_escaneados)
         self.bt_ocr.setVisible(False)
         lin.addWidget(self.bt_ocr)
+        self.bt_dim = QPushButton("📐 Dimensionamento")
+        self.bt_dim.setToolTip("Antes de criar: frota, frequência e jornada do edital → nº de "
+                               "circuitos → divisão pelos bairros (dá para mudar os valores)")
+        self.bt_dim.clicked.connect(lambda: self.dimensionamento())
+        lin.addWidget(self.bt_dim)
         b = QPushButton("🔄 Analisar de novo")
         b.clicked.connect(self.analisar)
         lin.addWidget(b)
@@ -901,6 +906,7 @@ class DialogoCriarTodos(QDialog):
         self.bt_ia.setVisible(bool(A["documentos"]) and bool(self.abrir_planos))
         self.bt_ia.setStyleSheet("font-weight:bold" if "ler_ia" in acoes else "")
         self.bt_emp.setEnabled(bool(A["perfil"]))
+        self.bt_dim.setEnabled(bool(A["perfil"]))
         self.bt_ocr.setVisible(bool(A.get("escaneados")))
         self._contar()
 
@@ -1013,9 +1019,35 @@ class DialogoCriarTodos(QDialog):
                    "saiu só a frota e o pessoal.</span>"
         self.lb_fim.setText(msg)
 
+    # ---------------------------------------------------------------- dimensionamento
+    def dimensionamento(self, antes_de_criar=False):
+        """Abre a análise do dimensionamento. Devolve True se o usuário confirmou."""
+        try:
+            from .janela_dimensionamento import DialogoDimensionamento
+        except ImportError:
+            from janela_dimensionamento import DialogoDimensionamento
+        ids = self._marcados()
+        if not CT.servicos_setorizaveis(self.A, ids):
+            if not antes_de_criar:
+                QMessageBox.information(self, "Dimensionamento",
+                                        "Nenhum plano marcado tem circuitos de coleta ou "
+                                        "varrição para dimensionar.")
+            return True
+        d = DialogoDimensionamento(self, self.A, ids, self.ed_mun.text().strip(),
+                                   self.ed_uf.text().strip().upper(), rodar=em_segundo_plano)
+        if antes_de_criar:
+            d.lb_topo.setText("<b>Confira o dimensionamento antes de criar.</b> "
+                              + d.lb_topo.text())
+        if not d.calcular():
+            return False
+        return d.exec() == QDialog.DialogCode.Accepted
+
     # ---------------------------------------------------------------- criar
     def _criar(self):
         ids = self._marcados()
+        if self.ck_baixar.isChecked() and CT.servicos_setorizaveis(self.A, ids) and                 not CT.dimensionamento_salvo(self.pasta):
+            if not self.dimensionamento(antes_de_criar=True):
+                return
         pd = self._progresso("Criando os planos…", len(ids))
         kw = dict(empresa=self.ed_empresa.text().strip(),
                   validar=self.ck_validar.isChecked(), corrigir=self.ck_corrigir.isChecked(),
@@ -1040,6 +1072,8 @@ class DialogoCriarTodos(QDialog):
                     txt += " · frota adequada"
                 elif fr.get("falhou"):
                     txt += " · frota falhou"
+                if r.get("setores_total"):
+                    txt += f" · {r['setores_total']} circuitos com ordem de passagem"
                 if r.get("redigido"):
                     txt += " · texto redigido pelo Claude"
                 elif r.get("redigido") is False:

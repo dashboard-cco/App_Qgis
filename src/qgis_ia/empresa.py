@@ -14,6 +14,64 @@ import re
 import unicodedata
 
 NOME = "planilha_modelo_empresa"
+CAMPOS_EMPRESA = ("Razão social", "CNPJ", "Endereço", "Fundação", "Capital social",
+                  "Preposto", "Responsável técnico", "Telefone", "E-mail")
+
+
+# ====================================================================== dados padrão
+def arquivo_padrao():
+    """Dados da empresa guardados para todos os projetos (fora das pastas dos contratos)."""
+    return os.environ.get("APP_QGIS_EMPRESA") or os.path.join(
+        os.path.expanduser("~"), ".app_qgis", "empresa.json")
+
+
+def empresa_padrao():
+    import json
+    try:
+        with open(arquivo_padrao(), encoding="utf-8") as f:
+            return {k: str(v) for k, v in json.load(f).items() if v not in (None, "")}
+    except (OSError, ValueError):
+        return {}
+
+
+def salvar_empresa_padrao(dados):
+    """Junta 'dados' aos dados guardados (campo vazio não apaga o que já existe)."""
+    import json
+    atual = empresa_padrao()
+    atual.update({k: str(v).strip() for k, v in dados.items() if str(v or "").strip()})
+    os.makedirs(os.path.dirname(arquivo_padrao()), exist_ok=True)
+    with open(arquivo_padrao(), "w", encoding="utf-8") as f:
+        json.dump(atual, f, ensure_ascii=False, indent=2)
+    return atual
+
+
+def completar_empresa_na_planilha(arq):
+    """Preenche na aba Empresa os campos vazios com os dados guardados (não troca o que o
+    usuário escreveu). Devolve quantos campos preencheu."""
+    from openpyxl import load_workbook
+    padrao = empresa_padrao()
+    if not padrao or not arq or not os.path.exists(arq):
+        return 0
+    wb = load_workbook(arq)
+    ws = next((w for w in wb.worksheets if "empresa" in _sa(w.title)), None)
+    if ws is None:
+        return 0
+    existentes = {_sa(r[0].value): r for r in ws.iter_rows(min_row=2) if r[0].value}
+    n = 0
+    for campo in CAMPOS_EMPRESA:
+        v = padrao.get(campo)
+        if not v:
+            continue
+        r = existentes.get(_sa(campo))
+        if r is None:
+            ws.append([campo, v])
+            n += 1
+        elif r[1].value in (None, ""):
+            r[1].value = v
+            n += 1
+    if n:
+        wb.save(arq)
+    return n
 SECOES = {           # chave interna → palavras que identificam a seção do texto exigida
     "servico": ("o que e o servico", "descricao do servico", "objeto", "escopo"),
     "material": ("material", "residuo"),
@@ -194,7 +252,25 @@ def ler(pasta):
                 if t and not str(t).startswith("["):
                     out["procedimentos"][str(col(d, "servico")).strip()] = str(t)
     wb.close()
+    # campos vazios da aba Empresa: valem os dados guardados da empresa
+    for k, v in empresa_padrao().items():
+        if not out["empresa"].get(k):
+            out["empresa"][k] = v
     return out
+
+
+FIXOS_EMPRESA = ("Razão social", "CNPJ", "Endereço", "Fundação", "Capital social",
+                 "Responsável técnico", "Telefone", "E-mail")
+
+
+def aprender_empresa(emp):
+    """Guarda os dados fixos da empresa que o usuário preencheu numa planilha (o preposto
+    muda de contrato para contrato e não é guardado)."""
+    novos = {k: v for k, v in (emp.get("empresa") or {}).items()
+             if k in FIXOS_EMPRESA and str(v or "").strip()}
+    if novos and any(empresa_padrao().get(k) != v for k, v in novos.items()):
+        salvar_empresa_padrao(novos)
+    return novos
 
 
 def criar_modelo(pasta, p, planos):
@@ -219,9 +295,9 @@ def criar_modelo(pasta, p, planos):
         return ws
 
     ws = aba("Empresa", ["Campo", "Valor"], [30, 60], primeira=True)
-    for c in ("Razão social", "CNPJ", "Endereço", "Preposto", "Responsável técnico",
-              "Telefone", "E-mail"):
-        ws.append([c, ""])
+    padrao = empresa_padrao()
+    for c in CAMPOS_EMPRESA:
+        ws.append([c, padrao.get(c, "")])
     ws = aba("Veículos", ["Identificação", "Serviço", "Lote", "Turno", "Tipo (edital)",
                           "Placa (opcional)"], [16, 10, 8, 10, 60, 16])
     ws2 = aba("Pessoal", ["Serviço", "Lote", "Turno", "Função", "Quantidade"],
@@ -450,9 +526,10 @@ def preencher_do_edital(pasta, p, docs, usar_claude=True, executar=None, progres
         return ws
 
     ws = aba("Empresa", ["Campo", "Valor", "Observação"], [28, 50, 60], primeira=True)
-    for c in ("Razão social", "CNPJ", "Endereço", "Preposto", "Responsável técnico",
-              "Telefone", "E-mail"):
-        ws.append([c, "", "Dado da empresa (não está no edital)"])
+    padrao = empresa_padrao()
+    for c in CAMPOS_EMPRESA:
+        ws.append([c, padrao.get(c, ""), "Dados guardados da empresa" if padrao.get(c)
+                   else "Dado da empresa (não está no edital)"])
     serv = p.get("servicos") or []
     lotes_perfil = [re.sub(r"\D", "", l["codigo"]) or l["codigo"] for l in p.get("lotes") or []]
     wv = aba("Veículos", ["Identificação", "Serviço", "Lote", "Turno", "Tipo (edital)",

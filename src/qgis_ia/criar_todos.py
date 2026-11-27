@@ -64,6 +64,14 @@ def _mod(nome):
         return importlib.import_module(f"planos.{nome}")
 
 
+def _mod_raiz(nome):
+    """Módulo da raiz do plugin (dentro do plugin ou nos testes)."""
+    import importlib
+    if __package__:
+        return importlib.import_module(f"{__package__}.{nome}")
+    return importlib.import_module(nome)
+
+
 def _sa(s):
     return unicodedata.normalize("NFKD", str(s or "")).encode("ascii", "ignore").decode().lower()
 
@@ -120,9 +128,12 @@ def escolhas(pasta):
 
 
 def guardar_escolhas(pasta, d):
+    """Grava as escolhas (mescla com as que já estão no arquivo)."""
+    tudo = escolhas(pasta)
+    tudo.update(d)
     try:
         with open(PA.arquivo(pasta, ARQ_ESCOLHAS, criar=True), "w", encoding="utf-8") as f:
-            json.dump(d, f, ensure_ascii=False, indent=2)
+            json.dump(tudo, f, ensure_ascii=False, indent=2)
     except OSError:
         pass
 
@@ -334,10 +345,11 @@ def analisar(pasta, progresso=None, cancelado=None):
     if osm:
         problema(ATENCAO, "sem_circuitos", "Planos sem plano atual: base do OpenStreetMap",
                  f"{len(osm)} plano(s) não têm plano atual na pasta. O app baixa as vias do "
-                 "OpenStreetMap do município (com o limite do IBGE) para servir de base, mas "
-                 "ainda não divide as vias em circuitos: as camadas do plano saem vazias.",
-                 "Colocar na pasta o plano atual de cada serviço; ou desenhar os circuitos "
-                 "sobre as vias baixadas (a divisão automática em circuitos é a próxima etapa).",
+                 "OpenStreetMap do município (com o limite do IBGE) e divide as vias em "
+                 "setores automaticamente: um setor por veículo do edital, com a mesma carga "
+                 "(km de vias). Ainda não há ordem de passagem (roteirização).",
+                 "Revisar os setores no QGIS (limites, turno e frequência); colocar na pasta o "
+                 "plano atual, se houver, para partir dele.",
                  osm)
         if not A["municipio"] or not A["uf"]:
             problema(ATENCAO, "sem_municipio", "Município do contrato não informado",
@@ -419,6 +431,33 @@ def _nome_arquivo(e, sigla, lote, padrao):
             .replace("{codigo}", sigla).replace("{servico}", sigla))
 
 
+ROTULO_VARRICAO = {"varricao": ("varricao_manual", "Varrição manual"),
+                   "varricao_mec": ("varricao_mecanizada", "Varrição mecanizada")}
+
+
+def _partes_por_lote(lotes, servs, lotes_de, serv):
+    """(lote, serviços, parte) de cada plano. A varrição sempre sai em arquivos próprios
+    (manual e mecanizada separadas), mesmo quando o edital pede um documento só para
+    vários serviços; parte = (sufixo do arquivo, rótulo) ou None."""
+    DMx = _mod_raiz("dimensionamento")
+    for lote in lotes:
+        sl = [c for c in servs if lote in lotes_de[c]]
+        tipos = {c: DMx.tipo_servico(serv[c].get("nome")) for c in sl}
+        varr = [c for c in sl if tipos[c] in ROTULO_VARRICAO]
+        if not varr or len(sl) == 1:
+            yield lote, sl, None
+            continue
+        outros = [c for c in sl if c not in varr]
+        if outros:
+            yield lote, outros, None
+        repetido = len({tipos[c] for c in varr}) < len(varr)
+        for c in varr:
+            suf, rot = ROTULO_VARRICAO[tipos[c]]
+            if repetido:
+                suf, rot = f"{suf}_{_arq(c)}", f"{rot} ({c})"
+            yield lote, [c], (suf, rot)
+
+
 def _planos_por_entregavel(A, p, lotes_perfil, lotes_marcados, desmarcados, bancos, problema):
     """Um plano por conjunto de serviços dos documentos exigidos: os arquivos do edital para
     os mesmos serviços (texto, mapa, tabela) ficam juntos no mesmo plano."""
@@ -439,10 +478,10 @@ def _planos_por_entregavel(A, p, lotes_perfil, lotes_marcados, desmarcados, banc
         nome = p["entregaveis"][(textos or [itens[0][0]])[0]]["nome"]
         pede_mapa = any(m for _, _, m in itens)
         lotes = sorted({lt for c in servs for lt in lotes_de[c]}, key=lambda x: (len(x), x))
-        for lote in lotes:
-            sl = [c for c in servs if lote in lotes_de[c]]
-            pid = f"E{gi}-{lote}"
-            nome_pasta = f"{gi:02d}_{_arq(nome)[:45]}_L{lote}"
+        for lote, sl, parte in _partes_por_lote(lotes, servs, lotes_de, serv):
+            pid = f"E{gi}-{lote}" + (f"-{parte[0]}" if parte else "")
+            nome_pasta = (f"{gi:02d}_{parte[0]}_L{lote}" if parte
+                          else f"{gi:02d}_{_arq(nome)[:45]}_L{lote}")
             sigla = sigla_auto(serv[sl[0]])
             atual = next((b for b in bancos if b["circuitos"] and
                           set(b.get("servicos_perfil") or []) & set(sl)), None)
@@ -452,20 +491,26 @@ def _planos_por_entregavel(A, p, lotes_perfil, lotes_marcados, desmarcados, banc
             for k, t, _ in itens:
                 e = p["entregaveis"][k]
                 ext = {"texto": ".docx", "planilha": ".xlsx", "mapa": ".gpkg"}[t]
-                arqs.append(_nome_arquivo(e, sigla, lote, f"{nome_pasta}{ext}"
-                                          if t != "planilha" or len(itens) == 1 else
-                                          f"{nome_pasta}_{_arq(e['nome'])[:30]}.xlsx"))
+                a_ = _nome_arquivo(e, sigla, lote, f"{nome_pasta}{ext}"
+                                   if t != "planilha" or len(itens) == 1 else
+                                   f"{nome_pasta}_{_arq(e['nome'])[:30]}.xlsx")
+                if parte and parte[0] not in a_:
+                    b_, x_ = os.path.splitext(a_)
+                    a_ = f"{b_}_{parte[0]}{x_}"
+                arqs.append(a_)
             mapa_arq = next((a for a in arqs if a.lower().endswith(".gpkg")), None)
             if pede_mapa and not mapa_arq:
                 mapa_arq = f"{nome_pasta}.gpkg"
                 arqs.append(mapa_arq)
-            pl = {"id": pid, "servico": sl[0], "servicos": sl, "sigla": "", "nome": nome,
+            pl = {"id": pid, "servico": sl[0], "servicos": sl, "sigla": "",
+                  "nome": nome + (f" — {parte[1]}" if parte else ""),
                   "lote": lote, "plano_existente": atual["caminho"] if atual else "",
                   "circuitos": atual["circuitos"] if atual else 0, "turnos": turnos,
                   "geo": ".gpkg" if pede_mapa else "", "osm": bool(pede_mapa and not atual),
                   "entregaveis": [k for k, _, _ in itens], "entregavel": itens[0][0],
                   "tipos": {k: t for k, t, _ in itens}, "tipo": "texto" if textos else itens[0][1],
                   "pasta_nome": nome_pasta, "arquivos": arqs, "mapa_arquivo": mapa_arq,
+                  "parte": parte[1] if parte else "",
                   "marcado": lote in lotes_marcados and pid not in desmarcados,
                   "problemas": []}
             partes = sorted({{"texto": "texto redigido do edital", "planilha": "planilha",
@@ -633,7 +678,10 @@ def criar(A, ids, pasta_saida, empresa="", validar=True, corrigir=True, frota=Tr
                 if par not in pares:
                     pares.append(par)
         EMP.criar_modelo(pasta, p, pares)
+    if EMP.arquivo(pasta):
+        EMP.completar_empresa_na_planilha(EMP.arquivo(pasta))
     emp = EMP.ler(pasta)
+    EMP.aprender_empresa(emp)
     if not emp["contatos"] and not emp["procedimentos"]:
         aviso(ATENCAO, "planilha_empresa_vazia", "Planilha da empresa sem contatos e procedimentos",
               f"O texto saiu sem essas seções. Arquivo: {os.path.basename(emp['arquivo'] or '')}.",
@@ -642,29 +690,11 @@ def criar(A, ids, pasta_saida, empresa="", validar=True, corrigir=True, frota=Tr
     empresa = empresa or EMP.nome_empresa(emp)
 
     # ------------------------------------------------------------ base (IBGE / OSM)
-    limite, vias = A.get("limite_df"), None
-    precisa_osm = [x for x in planos if x["osm"]]
-    precisa_lim = precisa_osm or [x for x in planos if A["slu"] and
-                                  E.SERVICOS.get(x["servico"], {}).get("grupo") == "demanda"]
-    if baixar and precisa_lim and not limite:
-        if municipio and uf:
-            prog(f"Baixando o limite de {municipio}/{uf} (IBGE)…")
-            try:
-                kw = {"baixar": baixar_fn} if baixar_fn else {}
-                limite = BD.limite_municipio(pasta, municipio.split(";")[0].strip(), uf, **kw)
-            except Exception as e:
-                aviso(ATENCAO, "falha_ibge", "Não consegui baixar o limite do IBGE", str(e),
-                      "Confira o município/UF e a internet, ou coloque o limite na pasta.",
-                      [x["id"] for x in precisa_lim])
-    if baixar and precisa_osm and limite:
-        try:
-            kw = {"baixar": baixar_fn} if baixar_fn else {}
-            vias = BD.vias_osm(pasta, limite, epsg=PF.epsg(p), progresso=prog,
-                               cancelado=cancelado, **kw)
-        except Exception as e:
-            aviso(ATENCAO, "falha_osm", "Não consegui baixar as vias do OpenStreetMap", str(e),
-                  "Tente de novo mais tarde (o servidor do OSM às vezes fica ocupado).",
-                  [x["id"] for x in precisa_osm])
+    A["_cancelado"] = cancelado
+    A["_baixar_fn"] = baixar_fn
+    A["_baixar"] = baixar
+    limite, vias = _baixar_base(A, planos, municipio, uf, baixar, baixar_fn, prog, cancelado,
+                                aviso)
 
     # ------------------------------------------------------------ histórico (frota/jornada)
     hist, hist_arq = None, ""
@@ -712,7 +742,8 @@ def criar(A, ids, pasta_saida, empresa="", validar=True, corrigir=True, frota=Tr
                 out.setdefault("arquivos", {})["base_vias_osm"] = vias["arquivo"]
             r.update(ok=True, **{k: out.get(k) for k in ("pasta", "arquivos", "validacao",
                                                          "correcao", "frota", "aviso",
-                                                         "a_definir", "redigido")},
+                                                         "a_definir", "redigido", "setores",
+                                                         "setores_total", "dimensionamento")},
                      pendentes=out.get("secoes_docx_a_preencher") or [])
         except Exception as e:
             r.update(ok=False, erro=f"{type(e).__name__}: {e}")
@@ -743,7 +774,8 @@ def criar(A, ids, pasta_saida, empresa="", validar=True, corrigir=True, frota=Tr
     if vias:
         aviso(INFO, "vias_baixadas", "Vias do OpenStreetMap baixadas",
               f"{vias['vias']} trechos, {vias['km']} km, em {os.path.relpath(vias['arquivo'], pasta)}.",
-              "Use como base para desenhar os circuitos.", [x["id"] for x in precisa_osm])
+              "Base dos circuitos (setores e ordem de passagem).",
+              [x["id"] for x in planos if x["osm"]])
     if hist_arq:
         aviso(INFO, "frota_feita", "Frota e jornada adequadas com o histórico",
               f"Histórico: {os.path.basename(hist_arq)}.",
@@ -884,6 +916,176 @@ def _criar_generico(A, pl, pasta_saida, empresa, emp, validar, corrigir, hist):
     return out
 
 
+
+# ====================================================================== base do município
+def _baixar_base(A, planos, municipio, uf, baixar=True, baixar_fn=None, prog=None,
+                 cancelado=None, aviso=None):
+    """Limite (IBGE) e vias (OSM) quando algum plano precisa. Devolve (limite, vias)."""
+    prog = prog or (lambda *a, **k: None)
+    aviso = aviso or (lambda *a, **k: None)
+    pasta = A["pasta"]
+    p = A["perfil"]
+    limite, vias = A.get("limite_df"), None
+    precisa_osm = [x for x in planos if x["osm"]]
+    precisa_lim = precisa_osm or [x for x in planos if A["slu"] and
+                                  E.SERVICOS.get(x["servico"], {}).get("grupo") == "demanda"]
+    if baixar and precisa_lim and not limite:
+        if municipio and uf:
+            prog(f"Baixando o limite de {municipio}/{uf} (IBGE)…")
+            try:
+                kw = {"baixar": baixar_fn} if baixar_fn else {}
+                limite = BD.limite_municipio(pasta, municipio.split(";")[0].strip(), uf, **kw)
+            except Exception as e:
+                aviso(ATENCAO, "falha_ibge", "Não consegui baixar o limite do IBGE", str(e),
+                      "Confira o município/UF e a internet, ou coloque o limite na pasta.",
+                      [x["id"] for x in precisa_lim])
+    if baixar and precisa_osm and limite:
+        try:
+            kw = {"baixar": baixar_fn} if baixar_fn else {}
+            vias = BD.vias_osm(pasta, limite, epsg=PF.epsg(p), progresso=prog,
+                               cancelado=cancelado, **kw)
+        except Exception as e:
+            aviso(ATENCAO, "falha_osm", "Não consegui baixar as vias do OpenStreetMap", str(e),
+                  "Tente de novo mais tarde (o servidor do OSM às vezes fica ocupado).",
+                  [x["id"] for x in precisa_osm])
+    A["_vias"] = vias["arquivo"] if vias else None
+    A["_limite"] = limite
+    return limite, vias
+
+
+def territorio(A, baixar=True, baixar_fn=None, progresso=None, aviso=None, setores_fonte=None):
+    """Território (vias em trechos, setores do IBGE com população, bairros) para a
+    setorização. Baixa os setores do IBGE e os bairros do OSM na 1ª vez. Fica em
+    A["_territorio"]."""
+    if A.get("_territorio") is not None:
+        return A["_territorio"]
+    baixar_fn = baixar_fn or A.get("_baixar_fn")
+    baixar = baixar and A.get("_baixar", True)
+    vias, limite = A.get("_vias"), A.get("_limite")
+    if not vias or not limite:
+        return None
+    prog = progresso or (lambda *a, **k: None)
+    aviso = aviso or (lambda *a, **k: None)
+    TE = _mod_raiz("territorio")
+    pasta = A["pasta"]
+    epsg = TE.epsg_de(vias)
+    base = PA.base(pasta, criar=True)
+    setores = os.path.join(base, "setores_ibge.gpkg")
+    # (com um baixador de teste no lugar da internet, os setores só vêm de setores_fonte)
+    if baixar and not os.path.exists(setores) and (baixar_fn is None or setores_fonte):
+        prog("Baixando os setores censitários do IBGE (população por quarteirão)…")
+        try:
+            BD.setores_ibge(pasta, limite, epsg=epsg, fonte=setores_fonte)
+        except Exception as e:
+            aviso(INFO, "falha_setores", "Sem a população do IBGE",
+                  f"Não consegui baixar os setores censitários: {e}",
+                  "A divisão usa só os km de vias (sem a população de cada bairro).")
+    pontos = os.path.join(base, "bairros_osm.gpkg")
+    if baixar and not os.path.exists(pontos):
+        prog("Baixando os bairros do OpenStreetMap…")
+        try:
+            kw = {"baixar": baixar_fn} if baixar_fn else {}
+            BD.bairros_osm(pasta, limite, epsg=epsg, **kw)
+        except Exception as e:
+            aviso(INFO, "falha_bairros", "Sem os bairros do OpenStreetMap", str(e),
+                  "Os circuitos são divididos sem seguir bairros.")
+    prog("Montando bairros e vias do município…")
+    p = A["perfil"]
+    textos = " ; ".join((s_.get("frequencia") or "") for s_ in p.get("servicos") or []
+                        if "domicil" in _sa(s_.get("nome")))
+    T = TE.Territorio(vias, limite, setores if os.path.exists(setores) else None,
+                      os.path.join(base, "bairros.gpkg"),
+                      pontos if os.path.exists(pontos) else None,
+                      municipio=p["contrato"].get("municipio") or "", texto_frequencia=textos)
+    A["_territorio"] = T
+    return T
+
+
+def servicos_setorizaveis(A, ids=None):
+    """[(servico, lote, nome)] dos planos marcados que terão circuitos (mapa sem camadas
+    definidas pelo edital, vias do OSM)."""
+    DM = _mod_raiz("dimensionamento")
+    p = A["perfil"]
+    serv = {s_["codigo"]: s_ for s_ in p.get("servicos") or []}
+    out = []
+    for x in A["planos"]:
+        if ids is not None and x["id"] not in set(ids):
+            continue
+        if x.get("entregavel") is None or not x.get("osm"):
+            continue
+        servs = x.get("servicos") or [x["servico"]]
+        if estrutura.camadas_exigidas(p, servs):
+            continue
+        for c in servs:
+            if DM.tipo_servico(serv.get(c, {}).get("nome")) and \
+                    (c, x["lote"]) not in [(a, b) for a, b, _ in out]:
+                out.append((c, x["lote"], serv.get(c, {}).get("nome", "")))
+    return out
+
+
+def dimensionamento_salvo(pasta):
+    return escolhas(pasta).get("dimensionamento") or {}
+
+
+def guardar_dimensionamento(pasta, params):
+    guardar_escolhas(pasta, {"dimensionamento": params})
+
+
+def parametros(A, servico, lote):
+    """Parâmetros do serviço: os salvos pelo usuário ou os do edital."""
+    DM = _mod_raiz("dimensionamento")
+    salvo = dimensionamento_salvo(A["pasta"]).get(f"{servico}|{lote}")
+    if salvo:
+        return DM.converter(salvo)
+    if "_qtds" not in A:
+        A["_qtds"] = DM.quantidades_edital(A["pasta"])
+    return DM.padrao(A["perfil"], servico, lote, qtds=A["_qtds"])
+
+
+def dimensionar(A, ids=None, municipio=None, uf=None, params=None, baixar=True, baixar_fn=None,
+                progresso=None, cancelado=None, setores_fonte=None):
+    """A análise ANTES de criar: baixa a base (se precisar) e calcula, para cada serviço,
+    o nº de circuitos por bairro com os parâmetros (os da tela, os salvos ou os do
+    edital). Devolve {"servicos": [...], "avisos": [...], "bairros": arquivo}."""
+    SZ = _mod_raiz("setorizacao")
+    DM = _mod_raiz("dimensionamento")
+    avisos = []
+
+    def aviso(nivel, codigo, titulo, detalhe, solucao, ids_=None):
+        avisos.append(f"{titulo}: {detalhe} — {solucao}")
+
+    p = A["perfil"]
+    municipio = municipio or A.get("municipio") or p["contrato"].get("municipio") or ""
+    uf = uf or A.get("uf") or p["contrato"].get("uf") or ""
+    planos = [x for x in A["planos"] if ids is None or x["id"] in set(ids)]
+    if not A.get("_vias"):
+        _baixar_base(A, planos, municipio, uf, baixar, baixar_fn, progresso, cancelado, aviso)
+    T = territorio(A, baixar, baixar_fn, progresso, aviso, setores_fonte)
+    out = []
+    for c, lote, nome in servicos_setorizaveis(A, ids):
+        chave = f"{c}|{lote}"
+        par = (params or {}).get(chave) or parametros(A, c, lote)
+        if not par:
+            continue
+        par = DM.converter(par)
+        item = {"chave": chave, "servico": c, "lote": lote, "nome": nome, "par": par,
+                "conta": DM.resumo_parametros(par), "plano": None}
+        if T is not None:
+            pl = SZ.planejar(T, par["tipo"], par)
+            item["plano"] = {
+                "circuitos": pl["circuitos"], "slots": pl["slots"],
+                "slots_usados": pl.get("slots_usados"), "km_vias": pl["km_vias"],
+                "cap_km": pl["cap_km"], "cap_t": pl["cap_t"], "alertas": pl["alertas"],
+                "ocupacao": pl.get("ocupacao"),
+                "grupos": [{"bairros": g["nomes"], "freq": g["freq"], "n": g["n"],
+                            "km": g["km"], "km_circ": g["km"] / max(1, g["n"]),
+                            "t_circ": g.get("t_circ")} for g in pl["grupos"]]}
+        out.append(item)
+    return {"servicos": out, "avisos": avisos, "territorio": T is not None,
+            "bairros": os.path.join(PA.base(A["pasta"]), "bairros.gpkg"),
+            "fonte_bairros": getattr(T, "fonte_bairros", "") if T is not None else ""}
+
+
 # ------------------------------------------------------------------ documento do edital
 def _criar_entregavel(A, pl, pasta_saida, empresa, emp, docs, redigir, executar, validar,
                       corrigir, prog, limite):
@@ -915,6 +1117,10 @@ def _criar_entregavel(A, pl, pasta_saida, empresa, emp, docs, redigir, executar,
                 importacao.criar_plano(p, plano, servs)
             else:
                 _gpkg_generico(plano, _epsg_area(p, limite))
+        if not cams and A.get("_vias") and limite:
+            out.update(_circuitos(A, pl, plano, pasta_plano, prog))
+            if out.get("xlsx_circuitos"):
+                arqs["xlsx_circuitos"] = out.pop("xlsx_circuitos")
         if cams and corrigir:
             rel = estrutura.completar_plano(p, plano, servs, backup=False)
             out["correcao"] = {"camadas_criadas": rel["camadas_criadas"],
@@ -971,14 +1177,93 @@ def _criar_entregavel(A, pl, pasta_saida, empresa, emp, docs, redigir, executar,
         destino = os.path.splitext(destino)[0] + ".docx"
         sub = f"Lote {lote}" + (f" — {empresa}" if empresa else "")
         itens = "Serviços: " + "; ".join(f"{c} {serv[c]['nome']}" for c in servs) + "."
+        res_c = {c: A["_setorizados"][(c, lote)] for c in servs
+                 if (A.get("_setorizados") or {}).get((c, lote))}
         _docx(destino, p, pl, empresa, secoes, txt, e.get("como_fazer") or "", plano,
-              titulo=e["nome"], subtitulo=sub, abertura=itens)
+              titulo=e["nome"] + (f" — {pl['parte']}" if pl.get("parte") else ""),
+              subtitulo=sub, abertura=itens, circuitos=res_c,
+              nomes_servicos={c: serv[c]["nome"] for c in servs})
         arqs[f"docx:{e['nome']}"] = destino
         pend += [t for t in secoes if not str(txt.get(t) or "").strip()]
         a_def += sum(str(v).count("[A DEFINIR") for v in txt.values())
     out["secoes_docx_a_preencher"] = pend
     out["a_definir"] = a_def
     return out
+
+
+def _circuitos(A, pl, plano, pasta_plano, prog=None):
+    """Dimensionamento → circuitos por bairro → ordem de passagem, gravados no mapa do
+    plano (camadas setores e rotas) + planilha <plano>_circuitos.xlsx."""
+    prog = prog or (lambda *a, **k: None)
+    p = A["perfil"]
+    serv = {s_["codigo"]: s_ for s_ in p.get("servicos") or []}
+    servs, lote = pl.get("servicos") or [pl["servico"]], pl["lote"]
+    out = {}
+    prog(f"Dimensionando e dividindo os circuitos ({pl['nome'][:50]}, lote {lote})…")
+    try:
+        SZ = _mod_raiz("setorizacao")
+        T = territorio(A, progresso=prog)
+        if T is None:
+            raise ValueError("sem vias/limite do município")
+        params = {c: parametros(A, c, lote) for c in servs}
+        params = {c: v for c, v in params.items() if v}
+        # o mesmo serviço pode estar em mais de um documento: calcula uma vez só
+        cache = A.setdefault("_setorizados", {})
+        faltam = [c for c in params if (c, lote) not in cache]
+        if faltam:
+            novos = SZ.setorizar(p, faltam, lote, T, params, rotear=True,
+                                 progresso=prog, cancelado=A.get("_cancelado"))
+            for c in faltam:
+                cache[(c, lote)] = novos.get(c)
+        res = {c: cache[(c, lote)] for c in params if cache.get((c, lote))}
+        n = SZ.gravar(plano, p, res) if res else 0
+        if res:
+            xl = os.path.join(pasta_plano, os.path.splitext(os.path.basename(plano))[0]
+                              + "_circuitos.xlsx")
+            SZ.planilha(xl, res, {c: serv[c]["nome"] for c in res})
+            out["xlsx_circuitos"] = xl
+        out["setores"] = {c: len(r["circuitos"]) for c, r in res.items()}
+        out["setores_total"] = n
+        out["dimensionamento"] = SZ.resumo(res)
+        al = [f"{c}: {x}" for c, r in res.items() for x in r["plano"]["alertas"]]
+        if al:
+            out["aviso"] = " | ".join(al)
+    except InterruptedError:
+        raise
+    except Exception as ex:
+        out["aviso"] = f"Não consegui dividir em circuitos: {ex}"
+    return out
+
+
+def refazer_circuitos(A, ids=None, municipio=None, uf=None, progresso=None, cancelado=None):
+    """Refaz só os circuitos (setores, rotas, planilha de circuitos) nos mapas dos planos
+    já criados, sem mexer nos textos. Usa o dimensionamento salvo."""
+    p = A["perfil"]
+    municipio = municipio or A.get("municipio") or p["contrato"].get("municipio") or ""
+    uf = uf or A.get("uf") or p["contrato"].get("uf") or ""
+    planos = [x for x in A["planos"] if ids is None or x["id"] in set(ids)]
+    A["_cancelado"] = cancelado
+    A.pop("_setorizados", None)
+    if not A.get("_vias"):
+        _baixar_base(A, planos, municipio, uf, True, None, progresso, cancelado)
+    pasta_saida = escolhas(A["pasta"]).get("pasta_saida") or PA.planos(A["pasta"])
+    res = []
+    for pl in planos:
+        if pl.get("entregavel") is None or not pl.get("mapa_arquivo"):
+            continue
+        servs = pl.get("servicos") or [pl["servico"]]
+        if estrutura.camadas_exigidas(p, servs):
+            continue
+        pasta_plano = os.path.join(pasta_saida, pl["pasta_nome"])
+        plano = os.path.join(pasta_plano, pl["mapa_arquivo"])
+        if os.path.splitext(plano)[1].lower() != ".gpkg":
+            plano = os.path.splitext(plano)[0] + ".gpkg"
+        if not os.path.exists(plano):
+            continue
+        r = _circuitos(A, pl, plano, pasta_plano, progresso)
+        r.update(id=pl["id"], nome=pl["nome"], mapa=plano)
+        res.append(r)
+    return res
 
 
 def _epsg_area(p, limite):
@@ -1068,38 +1353,139 @@ def _tabela_atributos(plano, destino):
     wb.save(destino)
 
 
-def _docx(destino, p, pl, empresa, secoes, txt, como_fazer, plano, titulo=None,
-          subtitulo=None, abertura=None):
+def _blocos_texto(texto):
+    """Texto redigido → blocos do padrão VA (linhas com "- " ou "• " viram lista)."""
+    out, itens = [], []
+    for par in str(texto).split("\n"):
+        t = par.strip()
+        if not t:
+            continue
+        m = re.match(r"^(?:[-•*▪]\s+)(.+)$", t)
+        if m:
+            itens.append(m.group(1))
+            continue
+        if itens:
+            out.append({"tipo": "lista", "itens": itens})
+            itens = []
+        out.append({"tipo": "paragrafo", "texto": t})
+    if itens:
+        out.append({"tipo": "lista", "itens": itens})
+    return out
+
+
+def _f1(x):
+    return f"{x:.1f}".replace(".", ",")
+
+
+def _blocos_circuitos(res, nomes):
+    """Anexo do documento: a conta do dimensionamento e a tabela dos circuitos."""
     try:
-        from .actions import slu
+        from . import dimensionamento as DMx
     except ImportError:
-        import slu
-    c = p["contrato"]
-    corpo = [slu._p(titulo or f"Plano de Serviço — {pl['servico']} - {pl['nome']}", "Title"),
-             slu._p(subtitulo or (f"Lote {pl['lote']}" + (f" — {empresa}" if empresa else "")),
-                    "Subtitle"),
-             slu._p(f"Elaborado conforme {c.get('titulo') or 'o edital'}"
-                    + (f" ({c['orgao']})" if c.get("orgao") else "") + ".")]
-    if abertura:
-        corpo.append(slu._p(abertura))
-    if como_fazer:
-        corpo.append(slu._p(f"Como o edital pede: {como_fazer}", italico=True, cor="7F7F7F"))
-    if plano:
-        corpo.append(slu._p(f"Mapa do plano: {os.path.basename(plano)} (setores, rotas e pontos).",
-                            italico=True, cor="7F7F7F"))
-    for n, t in enumerate(secoes, start=1):
-        corpo.append(slu._p(f"{n}. {t}", "Heading1"))
-        if txt.get(t):
-            for par in str(txt[t]).split("\n"):
-                if not par.strip():
-                    continue
-                if "[A DEFINIR" in par:
-                    corpo.append(slu._p(par, cor="C00000"))
-                else:
-                    corpo.append(slu._p(par))
+        import dimensionamento as DMx
+    blocos = [{"tipo": "anexo", "texto": "Anexo A | Dimensionamento e circuitos"},
+              {"tipo": "paragrafo", "texto": "Circuitos gerados pelo App_Qgis a partir do edital, "
+               "das vias do OpenStreetMap e dos setores censitários do IBGE (Censo 2022). O mapa "
+               "do plano tem os circuitos (camada *setores*) e a ordem de passagem (camada "
+               "*rotas*); a planilha de circuitos traz o itinerário rua a rua."}]
+    for c, r in res.items():
+        pl, circ = r["plano"], r["circuitos"]
+        par = pl["par"]
+        blocos.append({"tipo": "secao", "texto": f"{c} {nomes.get(c, '')}".strip()})
+        blocos.append({"tipo": "lista", "itens": DMx.resumo_parametros(par) + [
+            f"Vias do serviço: {_f1(pl['km_vias'])} km → **{len(circ)} circuitos**."]})
+        if pl.get("alertas"):
+            blocos.append({"tipo": "quadro", "cor": "amarelo",
+                           "texto": "**Atenção:** " + " ".join(pl["alertas"])})
+        tipo = r["tipo"]
+        if tipo == "coleta":
+            cols = ["Código", "Bairros", "Frequência / dias", "Turno", "km", "Desloc. km",
+                    "t por coleta"]
+            larg = [3.6, None, 3.2, 1.6, 1.3, 1.6, 1.6]
+        elif tipo == "varricao":
+            cols = ["Código", "Bairros", "Frequência / dias", "km de rua", "Desloc. km (a pé)",
+                    "Duplas"]
+            larg = [3.6, None, 3.2, 1.6, 2.0, 1.4]
         else:
-            corpo.append(slu._p("[Preencher]", italico=True, cor="7F7F7F"))
-    slu._escreve_docx(destino, "".join(corpo))
+            cols = ["Código", "Área / vias", "Frequência", "Turno", "km", "Desloc. km"]
+            larg = [3.6, None, 3.2, 1.6, 1.3, 1.6]
+        linhas = []
+        for ci in circ:
+            freq = " — ".join(x for x in (ci.get("frequencia") or "", ci.get("dias") or "") if x)
+            base = [ci.get("codigo", ""), ci.get("nome") or "", freq]
+            if tipo == "coleta":
+                linhas.append(base + [ci.get("turno", ""), _f1(ci["km"]),
+                                      _f1(ci.get("km_desloc", 0)), _f1(ci.get("t", 0))])
+            elif tipo == "varricao":
+                dup = {it.get("dupla") for it in ci.get("itinerario") or [] if it.get("dupla")}
+                linhas.append(base + [_f1(ci["km"]), _f1(ci.get("km_desloc", 0)),
+                                      str(len(dup) or 1)])
+            else:
+                linhas.append(base + [ci.get("turno", ""), _f1(ci["km"]),
+                                      _f1(ci.get("km_desloc", 0))])
+        tot_km = sum(ci["km"] for ci in circ)
+        tot = ["Total", f"{len(circ)} circuitos", ""]
+        if tipo == "coleta":
+            tot += ["", _f1(tot_km), _f1(sum(ci.get("km_desloc", 0) for ci in circ)), ""]
+        elif tipo == "varricao":
+            tot += [_f1(tot_km), _f1(sum(ci.get("km_desloc", 0) for ci in circ)), ""]
+        else:
+            tot += ["", _f1(tot_km), _f1(sum(ci.get("km_desloc", 0) for ci in circ))]
+        blocos.append({"tipo": "tabela", "colunas": cols, "linhas": linhas + [tot],
+                       "larguras": larg, "direita": list(range(len(cols) - 3, len(cols))),
+                       "total": True, "manter_junto": False,
+                       "nota": "km = vias do circuito; Desloc. = trechos percorridos sem serviço "
+                               "(ligação entre ruas e retorno ao início)."})
+    return blocos
+
+
+def _curto(t, n):
+    """Corta o texto numa palavra inteira (cabeçalho e rodapé em uma linha)."""
+    t = " ".join(str(t or "").split())
+    if len(t) <= n:
+        return t
+    c = t[:n - 1].rsplit(" ", 1)[0].rstrip(" –-,(")
+    return c + "…"
+
+
+def _docx(destino, p, pl, empresa, secoes, txt, como_fazer, plano, titulo=None,
+          subtitulo=None, abertura=None, circuitos=None, nomes_servicos=None):
+    """Texto do plano no padrão visual Valor Ambiental / CCIO (docx_va)."""
+    try:
+        from . import docx_va as DV
+    except ImportError:
+        import docx_va as DV
+    c = p["contrato"]
+    titulo = titulo or f"Plano de Serviço — {pl['servico']} - {pl['nome']}"
+    hoje = _dt.date.today().strftime("%d/%m/%Y")
+    blocos = [{"tipo": "titulo", "texto": titulo},
+              {"tipo": "subtitulo", "texto": subtitulo or (f"Lote {pl['lote']}"
+                                                          + (f" — {empresa}" if empresa else ""))},
+              {"tipo": "paragrafo", "texto": f"Elaborado conforme {c.get('titulo') or 'o edital'}"
+               + (f" ({c['orgao']})" if c.get("orgao") else "") + "."}]
+    if abertura:
+        blocos.append({"tipo": "paragrafo", "texto": abertura})
+    if como_fazer:
+        blocos.append({"tipo": "quadro", "cor": "cinza", "texto": f"**Como o edital pede:** {como_fazer}"})
+    if plano:
+        blocos.append({"tipo": "paragrafo", "texto": f"*Mapa do plano: {os.path.basename(plano)} "
+                       "(circuitos, ordem de passagem e pontos).*"})
+    for n, t in enumerate(secoes, start=1):
+        blocos.append({"tipo": "secao", "texto": f"{n}. {t}"})
+        if txt.get(t) and str(txt[t]).strip():
+            blocos += _blocos_texto(txt[t])
+        else:
+            blocos.append({"tipo": "paragrafo", "texto": "[A DEFINIR: preencher esta seção]"})
+    if circuitos:
+        blocos += _blocos_circuitos(circuitos, nomes_servicos or {})
+    orgao = c.get("orgao") or c.get("titulo") or "Licitação"
+    spec = {"saida": destino, "orientacao": "retrato",
+            "cabecalho": {"linha1": _curto(orgao, 75), "linha2": _curto(titulo, 70),
+                          "linha3": " | ".join(x for x in (empresa, f"Lote {pl['lote']}", hoje) if x)},
+            "rodape": f"{_curto(titulo, 80)} | Versão 1.0",
+            "metadados": {"titulo": titulo, "autor": empresa or ""},
+            "blocos": blocos}
+    return DV.gerar(spec)
 
 
 # ====================================================================== relatório

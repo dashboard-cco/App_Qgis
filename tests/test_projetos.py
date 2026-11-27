@@ -17,6 +17,9 @@ GDB = os.path.join(AQUI, "..", "Gdb")
 sys.path.insert(0, PLUGIN)
 sys.path.insert(0, os.path.join(PLUGIN, "actions"))
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+# dados guardados da empresa: arquivo temporário (nunca o do usuário)
+os.environ["APP_QGIS_EMPRESA"] = os.path.join(tempfile.gettempdir(),
+                                              f"app_qgis_empresa_teste_{os.getpid()}.json")
 
 import pastas as PA  # noqa: E402
 import projetos as P  # noqa: E402
@@ -359,7 +362,29 @@ try:
     check("CL01-D01" in xml and "Coletor: 9" in xml and "07:00" in xml and "Arial 12" in xml
           and "diariamente (Edital, p. 3)" in xml and "[A DEFINIR" in xml,
           "texto com frota identificada, equipe, horário, como fazer e redação do Claude")
+    zd = _zip.ZipFile(docx)
+    hdr = zd.read("word/header1.xml").decode("utf-8")
+    ftr = zd.read("word/footer1.xml").decode("utf-8")
+    est = zd.read("word/styles.xml").decode("utf-8")
+    check("1F5434" in hdr and "Prefeitura de Exemplo" in hdr and "Memorial" in hdr
+          and " PAGE " in ftr and "Versão 1.0" in ftr and 'w:styleId="Heading1"' in est
+          and 'w:val="C00000"' in xml,
+          "docx no padrão Valor Ambiental: faixa verde, cabeçalho, rodapé com página, "
+          "[A DEFINIR] em vermelho")
+    zd = None
     check("Contatos" in rg["pendentes"], f"contatos a preencher: {rg['pendentes']}")
+    # varrição: manual e mecanizada sempre em arquivos separados
+    sv = {"1.5": {"nome": "Coleta seletiva"}, "1.6": {"nome": "Varrição manual de vias"},
+          "1.7": {"nome": "Varrição mecanizada de vias"}}
+    pt = list(CT._partes_por_lote(["1"], ["1.6", "1.7"], {"1.6": ["1"], "1.7": ["1"]}, sv))
+    check([(x[1], x[2][0]) for x in pt] == [(["1.6"], "varricao_manual"),
+                                           (["1.7"], "varricao_mecanizada")],
+          f"varrição manual e mecanizada separadas: {pt}")
+    pt = list(CT._partes_por_lote(["1"], ["1.5", "1.6"], {"1.5": ["1"], "1.6": ["1"]}, sv))
+    check([(x[1], x[2] and x[2][0]) for x in pt] == [(["1.5"], None), (["1.6"], "varricao_manual")],
+          f"varrição sai do documento junto com outros serviços: {pt}")
+    pt = list(CT._partes_por_lote(["1"], ["1.6"], {"1.6": ["1"]}, sv))
+    check(pt == [("1", ["1.6"], None)], "varrição sozinha: plano normal")
     check(any(k.startswith("xlsx") for k in arqs) and "xlsx_conferencia" in arqs, "tabela e conferência")
     # a empresa preenche os contatos na planilha e cria de novo
     from openpyxl import load_workbook
@@ -409,6 +434,257 @@ try:
     txt_dest = EMP.textos(pg, "S1", "1", "CL", ["Diurno"], e2, ["Local de destinação"])
     check("Aterro Municipal — Estrada X, km 5" in txt_dest.get("Local de destinação", ""),
           "locais no texto do plano")
+
+    # ------------------------------------------------------------ setorização + roteirização
+    import setorizacao as SZ
+    import territorio as TE
+    import dimensionamento as DMZ
+    from osgeo import osr as _osr
+    sz = os.path.join(tmp, "setores")
+    os.makedirs(sz)
+    srs = _osr.SpatialReference()
+    srs.ImportFromEPSG(31983)
+    dsv = _ogr.GetDriverByName("GPKG").CreateDataSource(os.path.join(sz, "vias.gpkg"))
+    lv = dsv.CreateLayer("vias_osm", srs, _ogr.wkbLineString)
+    for c in ("highway", "nome"):
+        lv.CreateField(_ogr.FieldDefn(c, _ogr.OFTString))
+    lv.CreateField(_ogr.FieldDefn("mao_unica", _ogr.OFTInteger))
+    x0, y0 = 330000, 7390000
+    for i in range(21):                      # malha 2 x 2 km, ruas a cada 100 m (ways inteiros)
+        for (pa, pb) in (((x0 + i * 100, y0), (x0 + i * 100, y0 + 2000)),
+                         ((x0, y0 + i * 100), (x0 + 2000, y0 + i * 100))):
+            f = _ogr.Feature(lv.GetLayerDefn())
+            pts = ",".join(f"{pa[0] + (pb[0] - pa[0]) * k / 20} {pa[1] + (pb[1] - pa[1]) * k / 20}"
+                           for k in range(21))
+            f.SetGeometry(_ogr.CreateGeometryFromWkt(f"LINESTRING({pts})"))
+            f.SetField("highway", "residential" if i % 5 else "secondary")
+            f.SetField("nome", f"Rua {i}" if pa[0] == pb[0] else f"Avenida {i}")
+            lv.CreateFeature(f)
+    f = _ogr.Feature(lv.GetLayerDefn())      # rodovia: não entra na coleta
+    f.SetGeometry(_ogr.CreateGeometryFromWkt(f"LINESTRING({x0} {y0 + 1050},{x0 + 2000} {y0 + 1050})"))
+    f.SetField("highway", "motorway")
+    lv.CreateFeature(f)
+    dsv = None
+    dsl = _ogr.GetDriverByName("GPKG").CreateDataSource(os.path.join(sz, "limite.gpkg"))
+    ll = dsl.CreateLayer("limite", srs, _ogr.wkbPolygon)
+    f = _ogr.Feature(ll.GetLayerDefn())
+    f.SetGeometry(_ogr.CreateGeometryFromWkt(
+        f"POLYGON(({x0 - 50} {y0 - 50},{x0 + 2050} {y0 - 50},{x0 + 2050} {y0 + 2050},"
+        f"{x0 - 50} {y0 + 2050},{x0 - 50} {y0 - 50}))"))
+    ll.CreateFeature(f)
+    dsl = None
+    # 16 setores censitários (525 m) com população; o centro (canto sudoeste) mais denso
+    dss = _ogr.GetDriverByName("GPKG").CreateDataSource(os.path.join(sz, "setores_ibge.gpkg"))
+    ls_ = dss.CreateLayer("setores", srs, _ogr.wkbMultiPolygon)
+    for c, t in (("CD_SETOR", _ogr.OFTString), ("CD_SIT", _ogr.OFTString),
+                 ("NM_BAIRRO", _ogr.OFTString), ("v0001", _ogr.OFTInteger),
+                 ("v0002", _ogr.OFTInteger)):
+        ls_.CreateField(_ogr.FieldDefn(c, t))
+    for ia in range(4):
+        for ib in range(4):
+            xa, ya = x0 - 50 + ia * 525, y0 - 50 + ib * 525
+            f = _ogr.Feature(ls_.GetLayerDefn())
+            f.SetGeometry(_ogr.ForceToMultiPolygon(_ogr.CreateGeometryFromWkt(
+                f"POLYGON(({xa} {ya},{xa + 525} {ya},{xa + 525} {ya + 525},{xa} {ya + 525},{xa} {ya}))")))
+            f.SetField("CD_SETOR", f"S{ia}{ib}")
+            f.SetField("CD_SIT", "1")
+            f.SetField("v0001", 3000 if (ia < 2 and ib < 2) else 1000)
+            f.SetField("v0002", 1000 if (ia < 2 and ib < 2) else 330)
+            ls_.CreateFeature(f)
+    dss = None
+    dsp = _ogr.GetDriverByName("GPKG").CreateDataSource(os.path.join(sz, "bairros_osm.gpkg"))
+    lp = dsp.CreateLayer("bairros_osm", srs, _ogr.wkbPoint)
+    lp.CreateField(_ogr.FieldDefn("nome", _ogr.OFTString))
+    for nome, (px, py) in (("Centro", (500, 500)), ("Vila Leste", (1500, 500)),
+                           ("Vila Norte", (500, 1500)), ("Jardim Alto", (1500, 1500)),
+                           ("Teste", (1000, 1000))):
+        f = _ogr.Feature(lp.GetLayerDefn())
+        f.SetGeometry(_ogr.CreateGeometryFromWkt(f"POINT({x0 + px} {y0 + py})"))
+        f.SetField("nome", nome)
+        lp.CreateFeature(f)
+    dsp = None
+    check(TE.frequencia_padrao("Diária (seg. a dom.) no Centro Expandido; trissemanal nos "
+                               "demais bairros") == ("trissemanal", {"centro": "diaria"}),
+          "frequência do edital: diária no centro, trissemanal nos demais")
+    TT = TE.Territorio(os.path.join(sz, "vias.gpkg"), os.path.join(sz, "limite.gpkg"),
+                       os.path.join(sz, "setores_ibge.gpkg"), os.path.join(sz, "bairros.gpkg"),
+                       os.path.join(sz, "bairros_osm.gpkg"), "Teste",
+                       "Diária no Centro; trissemanal nos demais bairros")
+    check(len(TT.segs) > 800 and all(s_["km"] <= 0.1001 for s_ in TT.segs
+                                     if s_["highway"] != "motorway"),
+          f"vias quebradas nos cruzamentos: {len(TT.segs)} trechos")
+    check(sorted(b_["nome"] for b_ in TT.bairros) == ["Centro", "Jardim Alto", "Vila Leste",
+                                                     "Vila Norte"],
+          f"bairros pelos pontos do OSM (sem o nome do município): {[b_['nome'] for b_ in TT.bairros]}")
+    fq = {b_["nome"]: b_["frequencia"] for b_ in TT.bairros}
+    check(fq["Centro"] == "diaria" and fq["Vila Leste"] == "trissemanal"
+          and os.path.exists(os.path.join(sz, "bairros.gpkg")),
+          f"frequência por bairro gravada no arquivo de bairros: {fq}")
+    check(abs(sum(b_["pop"] for b_ in TT.bairros) - 24000) < 1, "população do IBGE nos bairros")
+
+    ps = PF.vazio()
+    ps["servicos"] = [{"codigo": "1.1", "sigla": "", "nome": "Coleta de resíduos domiciliares",
+                       "lotes": ["1"], "frequencia": "Diária no Centro; trissemanal nos demais"},
+                      {"codigo": "1.4", "sigla": "", "nome": "Limpeza de feiras livres",
+                       "lotes": ["1"], "frequencia": ""},
+                      {"codigo": "1.6", "sigla": "", "nome": "Varrição manual de vias",
+                       "lotes": ["1"], "frequencia": ""}]
+    ps["recursos"] = [{"servico": "1.1", "lote": "1", "categoria": "equipamento",
+                       "nome": "Caminhão compactador", "diurno": 2, "noturno": 2, "domingo": True},
+                      {"servico": "1.1", "lote": "1", "categoria": "equipamento",
+                       "nome": "Caçamba estacionária", "diurno": 50, "noturno": 0},
+                      {"servico": "1.4", "lote": "1", "categoria": "equipamento",
+                       "nome": "Caminhão pipa", "diurno": 2, "noturno": 0},
+                      {"servico": "1.6", "lote": "1", "categoria": "pessoal",
+                       "nome": "Varredor", "diurno": 8, "noturno": 0}]
+    ps["regras"] = [{"descricao": "Varrição manual: 2 equipes simultâneas.", "tipo": "x"}]
+    check(SZ.tipo_servico("Coleta de resíduos domiciliares") == "coleta"
+          and SZ.tipo_servico("Varrição mecanizada de vias") == "varricao_mec"
+          and SZ.tipo_servico("Limpeza de feiras livres") is None
+          and SZ.tipo_servico("Coleta em locais de difícil acesso") is None
+          and SZ.tipo_servico("Unidade de transferência (transbordo)") is None, "tipo de serviço")
+    qt = [("Coleta de resíduos domiciliares", "tonelada", 600.0),
+          ("Varrição manual de vias", "km eixo", 520.0)]
+    pc = DMZ.padrao(ps, "1.1", "1", qtds=qt)
+    check(pc["veiculos_diurno"] == 2 and pc["veiculos_noturno"] == 2 and pc["dias_semana"] == 7
+          and pc["t_mes"] == 600.0 and pc["frequencia"] == "trissemanal"
+          and pc["diaria_em"] == "centro", f"parâmetros do edital: {pc}")
+    pv = DMZ.padrao(ps, "1.6", "1", qtds=qt)
+    check(pv["equipes"] == 2 and pv["varredores"] == 8 and pv["km_mes"] == 520.0,
+          f"varrição: equipes e km do edital: {pv}")
+    check(DMZ.padrao(ps, "1.4", "1") is None, "feiras não têm dimensionamento")
+    check(pv["lados"] == 2, "varrição: o km do edital é de sarjeta (2 lados) por padrão")
+    pl2 = SZ.planejar(TT, "varricao", pv)
+    pv1 = dict(pv, lados=1)
+    pl1 = SZ.planejar(TT, "varricao", pv1)
+    check(abs(pl1["cap_km"] - 2 * pl2["cap_km"]) < 1e-9 and abs(pl1["cap_km"] - 10.0) < 1e-9,
+          f"varrição: 2 sarjetas por via = metade do km de rua ({pl2['cap_km']:.1f} km)")
+    pv = pv1                                     # o resto do teste usa km de rua
+    pc.update(velocidade_kmh=6.0, improdutivo_h=1.0)          # 38 km por circuito
+    plc = SZ.planejar(TT, "coleta", pc)
+    check(abs(plc["slots_usados"] - 4) < 1e-9 and plc["circuitos"] >= 4,
+          f"a frota fecha a conta (4 veículos-turno): {plc['slots_usados']} / {plc['circuitos']}")
+    rs = SZ.setorizar(ps, ["1.1", "1.4", "1.6"], "1", TT, {"1.1": pc, "1.6": pv})
+    check(sorted(rs) == ["1.1", "1.6"], f"feiras não viram circuito: {list(rs)}")
+    cs = rs["1.1"]["circuitos"]
+    cods = [c_["codigo"] for c_ in cs]
+    check(any(c_.endswith("-SQS") for c_ in cods) and any(c_.endswith("-TQS") for c_ in cods)
+          and len(set(cods)) == len(cods), f"códigos por veículo e dia: {cods}")
+    cen = [c_ for c_ in cs if c_["freq"] == "diaria"]
+    check(cen and all(c_["nomes"] == ["Centro"] and c_["turno"] == "Noturno" for c_ in cen),
+          f"centro diário com o turno noturno: {[(c_['codigo'], c_['nomes']) for c_ in cen]}")
+    nomes_b = [b_["nome"] for b_ in TT.bairros]
+    check(all(nomes_b[TT.segs[i]["bairro"]] in c_["nomes"] for c_ in cs for i in c_["idx"]),
+          "cada circuito fica dentro dos seus bairros")
+    check(abs(sum(c_["km"] for c_ in cs) - 84.0) < 0.6, f"todas as ruas, sem a rodovia: "
+          f"{sum(c_['km'] for c_ in cs):.1f}")
+    ok_seq = cobre = True
+    for c_ in cs:                                        # percurso fechado que cobre tudo
+        ps_ = c_["rota"]["passos"]
+        ok_seq = all(q1[2] == q2[1] for q1, q2 in zip(ps_[:-1], ps_[1:])) and ps_[0][1] == ps_[-1][2]
+        cobre = {p_[0] for p_ in ps_ if p_[3]} == set(c_["idx"])
+        if not (ok_seq and cobre):
+            break
+    check(ok_seq and cobre, "ordem de passagem: percurso contínuo, fechado, passa por todas as vias")
+    check(all(c_["itinerario"][0]["ordem"] == 1 for c_ in cs) and
+          all(abs(sum(it["km"] for it in c_["itinerario"] if it["servico"]) - c_["km"]) < 1e-6
+              for c_ in cs), "itinerário: km de serviço = km do circuito")
+    from shapely.ops import unary_union as _uu
+    uni = _uu([c_["geom"] for c_ in cs])
+    sobra = sum(c_["geom"].area for c_ in cs) - uni.area
+    check(sobra < 1, f"circuitos sem sobreposição: {sobra:.1f} m²")
+    cv = rs["1.6"]["circuitos"]
+    dia_v = [c_ for c_ in cv if c_["freq"] == "diaria"]
+    check(dia_v and len(cv) == len(dia_v) + (2 - len(dia_v)) * 6,
+          f"varrição: diários no centro + 1 circuito por dia da semana nas outras equipes: "
+          f"{[c_['codigo'] for c_ in cv]}")
+    check(all(abs(c_["km"] - 10.0) < 4.0 for c_ in cv if c_["freq"] != "diaria"),
+          f"varrição: ~10 km por equipe/dia: {[round(c_['km'], 1) for c_ in cv]}")
+    check({it["dupla"] for it in cv[0]["itinerario"]} == {1, 2},
+          "varrição: circuito repartido entre as 2 duplas")
+    check(all(c_["rota"]["contramao_km"] == 0 for c_ in cv)
+          and all(c_["km_desloc"] <= 0.6 * c_["km"] for c_ in cv),
+          f"varrição a pé: sem mão de direção e pouco deslocamento: "
+          f"{[(round(c_['km'], 1), round(c_['km_desloc'], 1)) for c_ in cv]}")
+    ini_ok = True
+    for c_ in cv:              # a equipe começa no próprio circuito, não no centro da cidade
+        p0 = c_["rota"]["passos"][0][1]
+        from shapely.geometry import Point as _Pt
+        ini_ok = ini_ok and c_["vias_geom"].distance(_Pt(p0)) < 1.0
+    check(ini_ok, "varrição: o percurso começa numa rua do circuito")
+    # divisas dos circuitos: nas vias, no limite do município ou na divisa do bairro
+    from shapely.ops import unary_union as _uu2
+    divisas = _uu2([s_["geom"] for s_ in TT.segs] + [TT.limite.boundary]
+                   + [b_["geom"].boundary for b_ in TT.bairros]).buffer(1.0)
+    fora = sum(c_["geom"].boundary.difference(divisas).length for c_ in cs)
+    tot_b = sum(c_["geom"].boundary.length for c_ in cs)
+    check(fora < 0.02 * tot_b, f"divisas dos circuitos seguem as vias: {fora:.0f} de {tot_b:.0f} m fora")
+    gsz = os.path.join(sz, "mapa.gpkg")
+    CT._gpkg_generico(gsz, 31983)
+    n_it = sum(len(c_["itinerario"]) for r_ in rs.values() for c_ in r_["circuitos"])
+    n_c = len(cs) + len(cv)
+    check(SZ.gravar(gsz, ps, rs) == n_c and SZ.gravar(gsz, ps, rs) == n_c, "grava e regrava")
+    dg = _ogr.Open(gsz)
+    check(dg.GetLayerByName("setores").GetFeatureCount() == n_c
+          and dg.GetLayerByName("rotas").GetFeatureCount() == n_it, "regravar não duplica")
+    dg = None
+    xl = SZ.planilha(os.path.join(sz, "circuitos.xlsx"), rs)
+    wbx = load_workbook(xl)
+    check(wbx.sheetnames == ["Dimensionamento", "Circuitos", "Itinerários"]
+          and wbx["Itinerários"].max_row == n_it + 1, "planilha de circuitos e itinerários")
+
+    # ------------------------------------------------------------ tratamento das vias do OSM
+    import base_dados as BDX
+    vt = os.path.join(sz, "vias_trat.gpkg")
+    dst = _ogr.GetDriverByName("GPKG").CreateDataSource(vt)
+    lt = dst.CreateLayer("vias_osm", srs, _ogr.wkbLineString)
+    for c in ("highway", "nome"):
+        lt.CreateField(_ogr.FieldDefn(c, _ogr.OFTString))
+    for wkt, hw in (("LINESTRING(0 0,100 0,200 0)", "residential"),      # rua A (nó no 100)
+                    ("LINESTRING(200 0,100 0,0 0)", "secondary"),        # A repetida, invertida
+                    ("LINESTRING(100 0,100 100)", "residential"),        # cruza A no nó 100
+                    ("LINESTRING(150 100,150 0.2)", "residential"),      # "T": encosta em A
+                    ("LINESTRING(50 -50,50 50)", "residential"),         # viaduto: sem nó
+                    ("LINESTRING(0 0,100 0)", "residential")):           # sobreposta a A
+        ft = _ogr.Feature(lt.GetLayerDefn())
+        ft.SetGeometry(_ogr.CreateGeometryFromWkt(wkt))
+        ft.SetField("highway", hw)
+        lt.CreateFeature(ft)
+    dst = None
+    check(not BDX.vias_tratadas(vt), "vias novas: ainda sem tratamento")
+    tr = BDX.tratar_vias(vt)
+    dst = _ogr.Open(vt)
+    lt = dst.GetLayer(0)
+    tre = sorted((round(ft.GetGeometryRef().Length()), ft.GetField("highway")) for ft in lt)
+    dst = None
+    check(BDX.vias_tratadas(vt) and tr["duplicadas"] == 2 and tr["quebras_t"] == 1
+          and tre == [(50, "secondary"), (50, "secondary"), (100, "residential"),
+                      (100, "residential"), (100, "residential"), (100, "secondary")],
+          f"vias do OSM: sem duplicadas e quebradas nos encontros (T também): {tr} {tre}")
+
+    # ------------------------------------------------------------ dados guardados da empresa
+    check(EMP.arquivo_padrao() == os.environ["APP_QGIS_EMPRESA"], "teste usa arquivo temporário")
+    EMP.salvar_empresa_padrao({"Razão social": "Empresa Teste Ltda", "CNPJ": "00.000.000/0001-00"})
+    EMP.salvar_empresa_padrao({"CNPJ": ""})                # vazio não apaga
+    check(EMP.empresa_padrao() == {"Razão social": "Empresa Teste Ltda",
+                                   "CNPJ": "00.000.000/0001-00"}, "dados guardados")
+    nova = os.path.join(tmp, "nova_empresa")
+    os.makedirs(nova)
+    arq_n = EMP.criar_modelo(nova, pg, [("S1", "1", "CL")])
+    check(EMP.ler(nova)["empresa"]["CNPJ"] == "00.000.000/0001-00"
+          and EMP.nome_empresa(EMP.ler(nova)) == "Empresa Teste Ltda",
+          "planilha nova já vem com os dados da empresa")
+    wb = load_workbook(arq_n)
+    for r in wb["Empresa"].iter_rows(min_row=2):
+        if r[0].value == "Telefone":
+            r[1].value = "(61) 3333-0000"
+        if r[0].value == "Preposto":
+            r[1].value = "Beltrano"
+    wb.save(arq_n)
+    EMP.aprender_empresa(EMP.ler(nova))
+    check(EMP.empresa_padrao().get("Telefone") == "(61) 3333-0000"
+          and "Preposto" not in EMP.empresa_padrao(), "aprende os dados fixos, não o preposto")
+    os.remove(EMP.arquivo_padrao())
 
     # ------------------------------------------------------------ janela (sem tela)
     from qgis.core import QgsApplication

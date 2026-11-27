@@ -38,7 +38,8 @@ do contrato, mesmo que tenha só o edital.
   citadas no perfil, com a frota, o pessoal e os dados da empresa. O que só a empresa ou o
   órgão definem sai em vermelho como `[A DEFINIR: …]`. Quando o documento pede setorização ou
   rotas, o plano ganha um mapa `.gpkg` (setores, rotas e pontos, ou as camadas do edital)
-  sobre as vias do OpenStreetMap. No SLU-DF continua um plano por serviço e lote (Anexo G).
+  sobre as vias do OpenStreetMap, com **circuitos e ordem de passagem** (ver
+  *Dimensionamento* abaixo). No SLU-DF continua um plano por serviço e lote (Anexo G).
   Cada um mostra de onde vem: plano atual da pasta (copiado; o original não muda), **vias do
   OpenStreetMap** quando não há plano (o limite do município vem do IBGE, e tudo fica em
   `Base/`), ou só documentos.
@@ -58,6 +59,65 @@ do contrato, mesmo que tenha só o edital.
   contatos e procedimentos vêm da **`planilha_modelo_empresa.xlsx`** da pasta; se ela não
   existir, o app cria um modelo já preenchido com a frota e o pessoal do edital.
 - **Resultado:** a planilha `Criar_Todos_<data>.xlsx`, com as abas Planos e Problemas.
+
+### Dimensionamento, circuitos e ordem de passagem
+
+Botão **📐 Dimensionamento** (abre sozinho antes do primeiro *Criar*): a análise de cada
+serviço **antes** de criar, com os valores do edital (dá para mudar e *Recalcular*):
+
+- **Coleta (domiciliar, seletiva):** veículos por turno, dias por semana, frequência
+  (diária no centro, trissemanal nos demais… como diz o edital), jornada, tempo fora do
+  circuito, velocidade, viagens por turno, carga por viagem e t/mês → **capacidade de um
+  circuito** (km e t). Cada bairro (km de vias + população do IBGE) pede um nº de circuitos;
+  bairros pequenos juntam com o vizinho de mesma frequência, os grandes são divididos (o
+  circuito fica dentro dos bairros). A frota fecha a conta: cada veículo-turno faz 1 circuito
+  diário, 2 trissemanais (`-SQS` seg/qua/sex e `-TQS` ter/qui/sáb, vizinhos), 3 bissemanais
+  ou 6 semanais. Se a frota não der, o app avisa quanto passa da capacidade (ponto para o
+  órgão).
+- **Varrição manual (feita a pé):** km/mês ÷ dias ÷ equipes = km por equipe/dia. O km do
+  edital é de **sarjeta** (campo *Sarjetas por via* = 2: cada rua conta os dois lados; use 1
+  se o edital medir km de rua). Só entram ruas com casas (setor do IBGE com pelo menos 15
+  domicílios por km de via): estradas e vias sem calçada ficam de fora. Bairros de varrição
+  diária (centro) primeiro; nas outras equipes, as ruas de cada bairro são escolhidas
+  **juntas** (começa na avenida mais movimentada e cresce rua vizinha por rua vizinha), para
+  a equipe andar pouco entre uma rua e outra. O percurso a pé ignora a mão de direção,
+  começa no próprio circuito e é repartido entre as **duplas**.
+- **Varrição mecanizada:** avenidas; km por varredeira/turno (também em sarjetas) →
+  circuitos em rodízio.
+- A varrição manual e a mecanizada saem **sempre em arquivos separados** (pasta, mapa,
+  planilha e texto próprios), mesmo quando o edital pede um documento só.
+- **Drenagem, capina…:** uma área por equipe.
+
+**Divisas dos circuitos:** cada circuito é feito de **quadras inteiras** (polígonos fechados
+pelas vias e pelo limite do município), então a divisa entre dois circuitos é sempre uma via
+ou o limite do município, nunca o meio de uma quadra.
+
+**Base** (em `App_Qgis/Base/`, baixada uma vez): limite (IBGE), vias (OpenStreetMap),
+**setores censitários do Censo 2022 com população** (lidos direto do servidor do IBGE, só o
+município) e **bairros**: os do IBGE quando a prefeitura informou; senão, cada setor
+censitário vai para o ponto de bairro do OSM mais próximo. `bairros.gpkg` tem o campo
+`frequencia` (diaria, trissemanal, bissemanal, semanal, quinzenal ou nao): mude no QGIS e
+recalcule.
+
+**Tratamento das vias do OSM** (logo depois de baixar, e uma vez nos arquivos baixados antes):
+tira as linhas duplicadas (mesma geometria, em qualquer sentido, e trechos sobrepostos) e
+quebra as linhas em todos os encontros, inclusive pontas que encostam no meio de outra via
+("T"). Viadutos e túneis que só se cruzam, sem nó em comum, não são quebrados. O arquivo fica
+com um trecho por linha (campo `trecho`).
+
+**Ordem de passagem** (roteirização por arcos, "carteiro chinês"): o percurso passa por
+todas as vias do circuito e volta ao início, repetindo o mínimo (deslocamento), preferindo a
+mão de direção. No mapa: `setores` (circuito, veículo, turno, dias, frequência, bairros, km,
+km de deslocamento, t por coleta, horas) e `rotas` (um trecho por linha, campo `ordem`,
+`via`, `tipo` serviço/deslocamento e `dupla`). Planilha `<plano>_circuitos.xlsx`: abas
+Dimensionamento, Circuitos e Itinerários (rua a rua).
+
+**Textos (.docx)** no padrão visual da Valor Ambiental / CCIO (o mesmo do DocumentoPadrãoCCIO):
+faixa verde, logo e cabeçalho em três linhas, rodapé com a página, títulos verdes em Arial,
+tabelas com cabeçalho verde e linhas zebradas, `[A DEFINIR]` em vermelho. O logo é lido de
+`~/.app_qgis/logo_empresa.png` (fora do Git). Quando o plano tem circuitos, o texto ganha o
+**Anexo A — Dimensionamento e circuitos** (a conta e a tabela dos circuitos). Os planos do
+padrão SLU (Anexo G) continuam no formato que o edital do SLU exige.
 
 Os detalhes ficam salvos na pasta (`qgis_ia_projeto.json`) e o projeto aparece em
 *Projetos recentes*. O assistente por mensagens (chat) e os Planos do Contrato continuam no
