@@ -8,6 +8,10 @@ from qgis.PyQt.QtWidgets import (QCheckBox, QComboBox, QDoubleSpinBox, QFileDial
                                  QHeaderView, QLabel, QLineEdit, QMessageBox, QPushButton,
                                  QSpinBox, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget)
 
+try:
+    from .. import pastas as PA
+except ImportError:  # testes
+    import pastas as PA
 from . import frota, historico
 from .abas_plano import carregar_camada
 
@@ -258,7 +262,7 @@ class AbaFrota(QWidget):
         return arq if arq and os.path.exists(arq) else ""
 
     def _hist_cache(self):
-        return os.path.join(self.j.pasta, "historico_cache.json") if self.j.pasta else None
+        return PA.arquivo(self.j.pasta, "historico_cache.json", criar=True) if self.j.pasta else None
 
     def _mostrar_hist(self):
         arq = self._hist_arquivo()

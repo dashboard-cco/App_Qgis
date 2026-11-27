@@ -16,7 +16,12 @@ from qgis.PyQt.QtWidgets import (QComboBox, QDialog, QFileDialog, QHBoxLayout, Q
                                  QPushButton, QTabWidget, QTreeWidget, QTreeWidgetItem,
                                  QVBoxLayout, QWidget)
 
+try:
+    from .. import pastas as PA
+except ImportError:  # testes
+    import pastas as PA
 from . import checklist, config_ia, documentos, extracao, ferramentas, leitor_claude, perfil
+from .barra import BarraLeitura
 
 ARQ_PERFIL = "contrato.json"
 ARQ_ESTADO = "estado.json"
@@ -166,6 +171,8 @@ def pedir_configuracao_inicial(parent):
 # ====================================================================== tarefas
 class _Sinal(QObject):
     msg = pyqtSignal(str)
+    leitura = pyqtSignal(int, str)          # leitura do edital pelo Claude: %, texto
+    leitura_fim = pyqtSignal(bool, str)     # terminou: ok, mensagem
 
 
 def camadas_do_projeto():
@@ -275,6 +282,10 @@ class JanelaPlanos(QDialog):
         self.abas.addTab(self.aba_validar, "7. Validar")
         self.abas.currentChanged.connect(self._aba_mudou)
 
+        self.barra = BarraLeitura()
+        lay.addWidget(self.barra)
+        self._sinal.leitura.connect(self.barra.mostrar)
+        self._sinal.leitura_fim.connect(self.barra.concluir)
         rod = QHBoxLayout()
         self.lb_status = QLabel("")
         rod.addWidget(self.lb_status, 1)
@@ -416,7 +427,7 @@ class JanelaPlanos(QDialog):
         QgsSettings().setValue(CFG_PASTA, self.pasta)
         QgsProject.instance().writeEntry("qgis_ia", "pasta_contrato", self.pasta)
         self.estado = {"documentos": [], "servicos": [], "manuais": {}, "planos": []}
-        arq = os.path.join(self.pasta, ARQ_ESTADO)
+        arq = PA.arquivo(self.pasta, ARQ_ESTADO)
         if os.path.exists(arq):
             try:
                 with open(arq, encoding="utf-8") as f:
@@ -424,7 +435,7 @@ class JanelaPlanos(QDialog):
             except (OSError, ValueError):
                 pass
         self.perfil = None
-        arq = os.path.join(self.pasta, ARQ_PERFIL)
+        arq = PA.arquivo(self.pasta, ARQ_PERFIL)
         if os.path.exists(arq):
             try:
                 self.perfil = perfil.carregar(arq)
@@ -454,11 +465,11 @@ class JanelaPlanos(QDialog):
 
     def _salvar_estado(self):
         os.makedirs(self.pasta, exist_ok=True)
-        with open(os.path.join(self.pasta, ARQ_ESTADO), "w", encoding="utf-8") as f:
+        with open(PA.arquivo(self.pasta, ARQ_ESTADO, criar=True), "w", encoding="utf-8") as f:
             json.dump(self.estado, f, ensure_ascii=False, indent=2)
 
     def _salvar_perfil(self):
-        perfil.salvar(self.perfil, os.path.join(self.pasta, ARQ_PERFIL))
+        perfil.salvar(self.perfil, PA.arquivo(self.pasta, ARQ_PERFIL, criar=True))
 
     # ------------------------------------------------------------ IA
     def _mostrar_ia(self, atualizar=False):
@@ -532,7 +543,7 @@ class JanelaPlanos(QDialog):
             if depois:
                 depois()
             return
-        cache = os.path.join(self.pasta, PASTA_TEXTOS)
+        cache = PA.arquivo(self.pasta, PASTA_TEXTOS, criar=True)
         sinal = self._sinal
 
         def trabalho(task):
@@ -581,7 +592,7 @@ class JanelaPlanos(QDialog):
                 f"imagem (≈ {max(1, n * 10 // 60)} min; usa a sua assinatura).\n\nContinuar?") \
                 != QMessageBox.StandardButton.Yes:
             return
-        cache = os.path.join(self.pasta, PASTA_TEXTOS)
+        cache = PA.arquivo(self.pasta, PASTA_TEXTOS, criar=True)
         sinal = self._sinal
 
         def trabalho(task):
@@ -652,9 +663,9 @@ class JanelaPlanos(QDialog):
                 self._status("Leitura cancelada.")
                 return
             novo, info = res
-            arq = os.path.join(self.pasta, ARQ_PERFIL)
+            arq = PA.arquivo(self.pasta, ARQ_PERFIL)
             if os.path.exists(arq):
-                os.replace(arq, os.path.join(self.pasta, "contrato_anterior.json"))
+                os.replace(arq, PA.arquivo(self.pasta, "contrato_anterior.json"))
             self.perfil = novo
             self.estado["servicos"] = []
             self._salvar_perfil()
@@ -688,7 +699,7 @@ class JanelaPlanos(QDialog):
             return
         exe = config_ia.claude_code()["exe"]
         os.makedirs(self.pasta, exist_ok=True)
-        self._arq_mcp = os.path.join(self.pasta, ".mcp_planos.json")
+        self._arq_mcp = PA.arquivo(self.pasta, ".mcp_planos.json", criar=True)
         with open(self._arq_mcp, "w", encoding="utf-8") as f:
             json.dump(leitor_claude.config_mcp(srv.python_path(), srv.bridge_path(), "127.0.0.1",
                                                srv.port, srv.token), f)
@@ -704,8 +715,10 @@ class JanelaPlanos(QDialog):
         self._processo = proc
         self._buf = b""
         self._fim_info = None
+        self._andamento = leitor_claude.Andamento(sum(len(d["paginas"]) for d in docs))
         self._ocupado(True)
         self._status("Iniciando o Claude…")
+        self._sinal.leitura.emit(1, "Iniciando o Claude…")
         args = leitor_claude.argumentos(self._arq_mcp)
         if exe.lower().endswith((".cmd", ".bat")):      # instalação via npm
             exe, args = "cmd", ["/c", exe] + args
@@ -722,6 +735,9 @@ class JanelaPlanos(QDialog):
                 continue
             if ev["tipo"] == "passo":
                 self._status("Claude: " + ev["texto"] + "…")
+                and_ = getattr(self, "_andamento", None)
+                pct = and_.passo(ev) if and_ else 0
+                self._sinal.leitura.emit(pct, ev["texto"])
             else:
                 self._fim_info = ev
 
@@ -745,6 +761,7 @@ class JanelaPlanos(QDialog):
                 pass
         info = self._fim_info or {"ok": False, "texto": erro[-600:] or "O Claude parou sem resposta."}
         self._recarregar_perfil_silencioso()
+        self._sinal.leitura_fim.emit(bool(info.get("ok")), info.get("texto") or "")
         if info.get("ok"):
             self.estado["servicos"] = []
             self._salvar_estado()
@@ -761,7 +778,7 @@ class JanelaPlanos(QDialog):
         self._timer_perfil.start(400)
 
     def _recarregar_perfil_silencioso(self):
-        arq = os.path.join(self.pasta, ARQ_PERFIL)
+        arq = PA.arquivo(self.pasta, ARQ_PERFIL)
         if os.path.exists(arq):
             try:
                 self.perfil = perfil.carregar(arq)
@@ -912,12 +929,12 @@ class JanelaPlanos(QDialog):
         self._salvar_estado()
 
     def _abrir_json(self):
-        arq = os.path.join(self.pasta, ARQ_PERFIL)
+        arq = PA.arquivo(self.pasta, ARQ_PERFIL)
         if os.path.exists(arq):
             QDesktopServices.openUrl(QUrl.fromLocalFile(arq))
 
     def _recarregar_perfil(self):
-        arq = os.path.join(self.pasta, ARQ_PERFIL)
+        arq = PA.arquivo(self.pasta, ARQ_PERFIL)
         if not os.path.exists(arq):
             return
         try:

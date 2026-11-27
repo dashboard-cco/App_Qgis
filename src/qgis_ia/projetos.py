@@ -17,9 +17,11 @@ from osgeo import gdal, ogr
 
 try:
     from . import edital_slu as E
+    from . import pastas as PA
     from .actions import slu
 except ImportError:  # testes: pastas do plugin e de actions no sys.path
     import edital_slu as E
+    import pastas as PA
     import slu
 
 ARQ_PROJETO = "qgis_ia_projeto.json"
@@ -158,7 +160,7 @@ def ler_pasta(pasta, profundidade=3, pular=None):
     res = {"pasta": pasta, "documentos": [], "bancos": [], "planilhas": [], "outros": 0}
     if not pasta or not os.path.isdir(pasta):
         return res
-    pular = {os.path.normcase(os.path.normpath(x)) for x in pular or []}
+    pular = {os.path.normcase(os.path.normpath(x)) for x in list(pular or []) + [PA.raiz(pasta)]}
     salvo = carregar_projeto(pasta)
     if salvo and salvo.get("pasta_saida"):
         pular.add(os.path.normcase(os.path.normpath(salvo["pasta_saida"])))
@@ -212,7 +214,7 @@ def detalhes_sugeridos(leitura, servico):
         "empresa": "",
         "plano_existente": b["caminho"] if b else "",
         "turnos": turnos or ["Diurno"],
-        "pasta_saida": os.path.join(leitura["pasta"], "Plano") if leitura.get("pasta") else "",
+        "pasta_saida": PA.planos(leitura["pasta"]) if leitura.get("pasta") else "",
         "validar": True,
         "textos": {},
     }
@@ -269,12 +271,12 @@ def faltando(det):
 # ====================================================================== projeto salvo
 def salvar_projeto(pasta, det):
     d = dict(det, salvo_em=_dt.datetime.now().isoformat(timespec="seconds"))
-    with open(os.path.join(pasta, ARQ_PROJETO), "w", encoding="utf-8") as f:
+    with open(PA.arquivo(pasta, ARQ_PROJETO, criar=True), "w", encoding="utf-8") as f:
         json.dump(d, f, ensure_ascii=False, indent=2)
 
 
 def carregar_projeto(pasta, servico=None):
-    arq = os.path.join(pasta, ARQ_PROJETO)
+    arq = PA.arquivo(pasta, ARQ_PROJETO)
     if not os.path.exists(arq):
         return None
     try:

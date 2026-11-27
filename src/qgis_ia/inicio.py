@@ -20,10 +20,14 @@ from qgis.PyQt.QtWidgets import (QApplication, QCheckBox, QComboBox, QDialog, QF
 
 try:
     from . import criar_todos as CT
+    from . import pastas as PA
+    from .planos.barra import BarraLeitura
     from . import edital_slu as E
     from . import projetos as P
 except ImportError:  # testes: pasta do plugin no sys.path
     import criar_todos as CT
+    import pastas as PA
+    from planos.barra import BarraLeitura
     import edital_slu as E
     import projetos as P
 
@@ -50,12 +54,16 @@ def em_segundo_plano(fn, pd):
     Devolve o resultado, ou None se der erro/cancelar (o erro aparece numa mensagem)."""
     import threading
     import time
-    estado = {"txt": None, "res": None, "erro": None, "cancelar": False}
+    estado = {"txt": None, "res": None, "erro": None, "cancelar": False, "i": 0, "n": 0}
+
+    def prog(t, i=None, n=None):
+        estado["txt"] = t
+        if n:
+            estado["i"], estado["n"] = i or 0, n
 
     def trabalho():
         try:
-            estado["res"] = fn(lambda t, *_: estado.__setitem__("txt", t),
-                               lambda: estado["cancelar"])
+            estado["res"] = fn(prog, lambda: estado["cancelar"])
         except Exception as e:
             estado["erro"] = e
 
@@ -64,6 +72,9 @@ def em_segundo_plano(fn, pd):
     while t.is_alive():
         if estado["txt"]:
             pd.setLabelText(estado["txt"])
+        if estado["n"]:
+            pd.setMaximum(estado["n"])
+            pd.setValue(estado["i"])
         estado["cancelar"] = pd.wasCanceled()
         QApplication.processEvents()
         time.sleep(0.05)
@@ -748,7 +759,7 @@ class DialogoCriarTodos(QDialog):
         lin.addWidget(self.ed_uf)
         fl.addRow("Município:", lin)
         lin = QHBoxLayout()
-        self.ed_saida = QLineEdit(os.path.join(pasta, "Planos"))
+        self.ed_saida = QLineEdit(PA.planos(pasta))
         lin.addWidget(self.ed_saida, 1)
         b = QPushButton("Escolher…")
         b.clicked.connect(self._escolher_saida)
@@ -759,13 +770,20 @@ class DialogoCriarTodos(QDialog):
         self.ck_frota = QCheckBox("Adequar frota e jornada (com histórico)")
         self.ck_corrigir = QCheckBox("Corrigir automaticamente")
         self.ck_validar = QCheckBox("Conferir com as regras do edital")
-        for ck in (self.ck_baixar, self.ck_frota, self.ck_corrigir, self.ck_validar):
+        self.ck_redigir = QCheckBox("Redigir o texto com o Claude")
+        self.ck_redigir.setToolTip("O Claude escreve cada seção exigida a partir das páginas do "
+                                   "edital (≈ 1 a 2 min por documento; usa a sua assinatura)")
+        for ck in (self.ck_redigir, self.ck_baixar, self.ck_frota, self.ck_corrigir,
+                   self.ck_validar):
             ck.setChecked(True)
             op.addWidget(ck)
         op.addStretch()
         fl.addRow("Etapas:", op)
         lay.addLayout(fl)
 
+        self.barra_ia = BarraLeitura()
+        lay.addWidget(self.barra_ia)
+        self._janela_leitura = None
         rod = QHBoxLayout()
         self.lb_fim = QLabel()
         self.lb_fim.setWordWrap(True)
@@ -913,10 +931,45 @@ class DialogoCriarTodos(QDialog):
             self.ed_saida.setText(os.path.normpath(p))
 
     def _ler_ia(self):
-        if self.abrir_planos:
-            self.abrir_planos(self.pasta, [d["caminho"] for d in self.A["documentos"]], ler=True)
-            self.lb_fim.setText("O Claude está lendo o edital na janela Planos do Contrato. "
-                                "Quando terminar, clique em <b>Analisar de novo</b>.")
+        if not self.abrir_planos:
+            return
+        jan = self.abrir_planos(self.pasta, [d["caminho"] for d in self.A["documentos"]],
+                                ler=True)
+        self.lb_fim.setText("Confirme a leitura na janela Planos do Contrato. O andamento "
+                            "aparece aqui; no fim a pasta é analisada de novo sozinha.")
+        sinal = getattr(jan, "_sinal", None)
+        if sinal is None:
+            return
+        self._desligar_leitura()
+        self._janela_leitura = sinal
+        sinal.leitura.connect(self.barra_ia.mostrar)
+        sinal.leitura_fim.connect(self._fim_leitura_ia)
+
+    def _desligar_leitura(self):
+        s = self._janela_leitura
+        if s is None:
+            return
+        for sig, fn in ((s.leitura, self.barra_ia.mostrar), (s.leitura_fim, self._fim_leitura_ia)):
+            try:
+                sig.disconnect(fn)
+            except (TypeError, RuntimeError):
+                pass
+        self._janela_leitura = None
+
+    def _fim_leitura_ia(self, ok, texto):
+        self._desligar_leitura()
+        self.barra_ia.concluir(ok, texto)
+        if ok:
+            self.lb_fim.setText("O Claude terminou de ler o edital. Analisando a pasta de novo…")
+            self.analisar()
+            self.lb_fim.setText("Edital lido e pasta analisada: confira os planos e os problemas.")
+        else:
+            self.lb_fim.setText("<span style='color:#c00'>A leitura do edital não terminou.</span> "
+                                "Veja a mensagem na janela Planos do Contrato e tente de novo.")
+
+    def done(self, r):
+        self._desligar_leitura()
+        super().done(r)
 
     def _ler_escaneados(self):
         pd = self._progresso("Lendo as páginas escaneadas com o Claude…")
@@ -931,39 +984,50 @@ class DialogoCriarTodos(QDialog):
                                else "."))
 
     def _planilha_empresa(self):
-        planos = [(x["servico"], x["lote"], x["sigla"]) for x in self.A["planos"]
-                  if x["id"] in set(self._marcados())] or \
-            [(x["servico"], x["lote"], x["sigla"]) for x in self.A["planos"]]
-        arq = CT.EMP.criar_modelo(self.pasta, self.A["perfil"], planos)
-        _abrir(arq)
-        self.lb_fim.setText(f"Planilha da empresa: {os.path.basename(arq)}. Preencha, salve e "
-                            "clique em Analisar de novo.")
+        """Monta a planilha da empresa com o que já está no edital (o Claude lê procedimentos,
+        locais e responsáveis). No SLU, o modelo com a frota do Anexo R."""
+        if self.A["slu"]:
+            planos = [(x["servico"], x["lote"], x["sigla"]) for x in self.A["planos"]]
+            arq = CT.EMP.criar_modelo(self.pasta, self.A["perfil"], planos)
+            _abrir(arq)
+            self.lb_fim.setText(f"Planilha da empresa: {os.path.basename(arq)}.")
+            return
+        pd = self._progresso("Montando a planilha da empresa com o edital…")
+        info = em_segundo_plano(lambda prog, canc: CT.preparar_planilha(self.A, prog, canc), pd)
+        if not info:
+            return
+        _abrir(info["arquivo"])
+        partes = [f"{info['veiculos']} veículos", f"{info['pessoal']} linhas de pessoal",
+                  f"{info['procedimentos']} procedimentos", f"{info['locais']} locais",
+                  f"{info['responsaveis']} funções responsáveis"]
+        msg = f"<b>Planilha montada com o edital</b> ({os.path.basename(info['arquivo'])}): " \
+              + ", ".join(partes) + ". Complete os dados da empresa, nomes e o que está " \
+              "[A DEFINIR], salve e crie os planos."
+        if info["arquivo"].endswith("_sugerida.xlsx"):
+            msg += " <i>A sua planilha já tinha dados seus: esta é uma sugestão ao lado, " \
+                   "nada foi apagado.</i>"
+        elif info.get("substituiu"):
+            msg += " <i>A versão anterior ficou em App_Qgis\\Contrato.</i>"
+        if info.get("claude") is False:
+            msg += f" <span style='color:#c00'>O Claude não respondeu ({info['erro_claude'][:120]}); " \
+                   "saiu só a frota e o pessoal.</span>"
+        self.lb_fim.setText(msg)
 
     # ---------------------------------------------------------------- criar
     def _criar(self):
         ids = self._marcados()
         pd = self._progresso("Criando os planos…", len(ids))
-
-        def prog(txt, i=0, n=0):
-            pd.setLabelText(txt)
-            if n:
-                pd.setMaximum(n)
-                pd.setValue(i)
-            QApplication.processEvents()
-
-        try:
-            self.resultado = CT.criar(
-                self.A, ids, self.ed_saida.text().strip(), empresa=self.ed_empresa.text().strip(),
-                validar=self.ck_validar.isChecked(), corrigir=self.ck_corrigir.isChecked(),
-                frota=self.ck_frota.isChecked(), baixar=self.ck_baixar.isChecked(),
-                municipio=self.ed_mun.text().strip(), uf=self.ed_uf.text().strip().upper(),
-                progresso=prog, cancelado=pd.wasCanceled)
-        except Exception as e:
-            pd.close()
-            QMessageBox.warning(self, "Criar Todos", str(e))
+        kw = dict(empresa=self.ed_empresa.text().strip(),
+                  validar=self.ck_validar.isChecked(), corrigir=self.ck_corrigir.isChecked(),
+                  frota=self.ck_frota.isChecked(), baixar=self.ck_baixar.isChecked(),
+                  redigir=self.ck_redigir.isChecked(),
+                  municipio=self.ed_mun.text().strip(), uf=self.ed_uf.text().strip().upper())
+        saida = self.ed_saida.text().strip()
+        R = em_segundo_plano(lambda prog, canc: CT.criar(self.A, ids, saida, progresso=prog,
+                                                         cancelado=canc, **kw), pd)
+        if R is None:
             return
-        pd.close()
-        R = self.resultado
+        self.resultado = R
         for r in R["planos"]:
             it = self.itens[r["id"]]
             if r.get("ok"):
@@ -976,8 +1040,14 @@ class DialogoCriarTodos(QDialog):
                     txt += " · frota adequada"
                 elif fr.get("falhou"):
                     txt += " · frota falhou"
+                if r.get("redigido"):
+                    txt += " · texto redigido pelo Claude"
+                elif r.get("redigido") is False:
+                    txt += " · Claude não redigiu"
                 if r.get("pendentes"):
                     txt += f" · texto: {len(r['pendentes'])} seções a completar"
+                if r.get("a_definir"):
+                    txt += f" · {r['a_definir']} [A DEFINIR]"
                 it.setData(4, _PAPEL, r["pasta"])
             else:
                 txt = f"❌ {r.get('erro', '')}"

@@ -113,6 +113,7 @@ class QgisIaPlugin:
         if ler:
             self.janela_planos.abas.setCurrentIndex(0)
             QTimer.singleShot(300, self.janela_planos._ler_com_ia)
+        return self.janela_planos
         self.janela_planos.raise_()
         self.janela_planos.activateWindow()
 

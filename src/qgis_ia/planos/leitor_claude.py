@@ -137,6 +137,44 @@ _ROTULOS = {
 }
 
 
+class Andamento:
+    """Porcentagem da leitura do edital a partir dos passos do Claude.
+
+    Até 45 %: leitura dos documentos (cresce com as páginas lidas e as buscas, sem chegar
+    ao fim antes de gravar). De 45 % a 98 %: seções do perfil gravadas (12 no total)."""
+
+    TOTAL_SECOES = 12
+
+    def __init__(self, paginas_total=0):
+        self.paginas_total = max(1, int(paginas_total or 0))
+        self.paginas = 0
+        self.passos = 0
+        self.secoes = set()
+        self.pct = 0
+        self.texto = ""
+
+    def passo(self, ev):
+        import math
+        self.passos += 1
+        self.texto = ev.get("texto") or self.texto
+        f, ent = ev.get("ferramenta"), ev.get("entrada") or {}
+        if f == "planos_ler_paginas":
+            try:
+                self.paginas += max(1, int(ent.get("ate", 0)) - int(ent.get("de", 0)) + 1)
+            except (TypeError, ValueError):
+                self.paginas += 1
+        elif f == "planos_salvar_secao" and ent.get("secao"):
+            self.secoes.add(ent["secao"])
+        # leitura: o Claude lê só as páginas que importam (≈ 1/3 do total, no máximo ~150)
+        alvo = min(150, max(20, self.paginas_total / 3))
+        leitura = 1 - math.exp(-(self.paginas / alvo + self.passos / 40))
+        pct = 3 + 42 * leitura
+        if self.secoes:
+            pct = 45 + 53 * min(1, len(self.secoes) / self.TOTAL_SECOES)
+        self.pct = max(self.pct, int(pct))         # nunca volta
+        return self.pct
+
+
 def interpretar(linha):
     """Uma linha do stream-json do Claude Code -> evento simples:
        {"tipo": "passo", "texto"} | {"tipo": "fim", "ok", "texto", "custo"} | None"""
@@ -150,7 +188,9 @@ def interpretar(linha):
             if b.get("type") == "tool_use":
                 nome = b.get("name", "").split("__")[-1]
                 rot = _ROTULOS.get(nome)
-                return {"tipo": "passo", "texto": rot(b.get("input") or {}) if rot else nome}
+                ent = b.get("input") or {}
+                return {"tipo": "passo", "texto": rot(ent) if rot else nome,
+                        "ferramenta": nome, "entrada": ent}
     elif t == "result":
         texto = ev.get("result") or ""
         ok = not ev.get("is_error") and ev.get("subtype", "success") == "success"

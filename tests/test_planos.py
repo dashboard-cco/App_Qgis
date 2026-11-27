@@ -246,7 +246,8 @@ check(cfg["mcpServers"]["qgis-planos"]["env"]["QGIS_IA_FERRAMENTAS"] == "planos_
 ev = LC.interpretar(json.dumps({"type": "assistant", "message": {"content": [
     {"type": "tool_use", "name": "mcp__qgis-planos__planos_ler_paginas",
      "input": {"documento": "Edital", "de": 1, "ate": 30}}]}}))
-check(ev == {"tipo": "passo", "texto": "Lendo Edital, p. 1-30"}, f"evento {ev}")
+check(ev["tipo"] == "passo" and ev["texto"] == "Lendo Edital, p. 1-30"
+      and ev["ferramenta"] == "planos_ler_paginas", f"evento {ev}")
 ev = LC.interpretar(json.dumps({"type": "result", "subtype": "success", "is_error": False,
                                 "result": "Pronto", "total_cost_usd": 1.2, "num_turns": 9}))
 check(ev["tipo"] == "fim" and ev["ok"] and ev["texto"] == "Pronto", f"fim {ev}")
@@ -285,7 +286,7 @@ if qgs:
             jan.cb_pronto.setCurrentIndex(1)
             jan._usar_pronto(1)
         check(jan.perfil and len(jan.perfil["servicos"]) == 12, "perfil pronto carregado")
-        check(os.path.exists(os.path.join(tmp, "contrato.json")), "contrato.json gravado")
+        check(os.path.exists(os.path.join(tmp, "App_Qgis", "Contrato", "contrato.json")), "contrato.json gravado")
         raiz = jan.arv_req.topLevelItemCount()
         check(raiz >= 8, f"árvore de requisitos {raiz}")
         # marca P1 na árvore
@@ -319,7 +320,7 @@ if qgs:
                     if "Veículos e placas" in g0.child(k).text(0))
         alvo.setCheckState(0, J._MARCADO)
         check(jan.estado["manuais"].get("insumo|Veículos e placas") is True, "manual gravado")
-        with open(os.path.join(tmp, "estado.json"), encoding="utf-8") as fh:
+        with open(os.path.join(tmp, "App_Qgis", "Contrato", "estado.json"), encoding="utf-8") as fh:
             check(json.load(fh)["manuais"].get("insumo|Veículos e placas") is True, "estado.json")
         check("Ainda falta" in jan.lb_placar.text() or "Pronto" in jan.lb_placar.text(), "placar")
 
@@ -355,7 +356,7 @@ if qgs:
             b = F.planos_buscar("caminhao|compactador")
             check(b["ocorrencias"] > 0, "buscar no Anexo R")
         F.planos_iniciar_perfil()
-        check(os.path.exists(os.path.join(tmp, "contrato_anterior.json")), "backup do perfil")
+        check(os.path.exists(os.path.join(tmp, "App_Qgis", "Contrato", "contrato_anterior.json")), "backup do perfil")
         r = F.planos_salvar_secao("servicos", [{"codigo": "P1"}])
         check(r["ok"] is False and r["erros"], "seção inválida não grava")
         s1 = perfil.perfil_slu_df()["servicos"][:2]

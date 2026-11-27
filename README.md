@@ -31,7 +31,14 @@ do contrato, mesmo que tenha só o edital.
   pessoal, turnos, município/UF e, para cada arquivo exigido, o **padrão do nome**
   (ex.: `{sigla}{lote}.gdb`), o formato, as **seções** do texto e **como fazer**. O edital do
   SLU-DF (Pregão 90005/2026) já tem perfil pronto, e para ele o app usa o gerador do Anexo G.
-- **Planos que o contrato pede.** Um por serviço e lote, com os arquivos que o edital exige.
+- **Planos que o contrato pede.** Em qualquer edital, os planos são **os documentos que o
+  edital exige**: ex.: "Plano de Trabalho Operacional" dos itens 1.1 a 1.5, com as seções
+  pedidas. Os arquivos do mesmo conjunto de serviços (texto, mapa, tabela) ficam juntos, um
+  plano por lote. O **Claude redige cada seção** a partir das páginas do edital e dos anexos
+  citadas no perfil, com a frota, o pessoal e os dados da empresa. O que só a empresa ou o
+  órgão definem sai em vermelho como `[A DEFINIR: …]`. Quando o documento pede setorização ou
+  rotas, o plano ganha um mapa `.gpkg` (setores, rotas e pontos, ou as camadas do edital)
+  sobre as vias do OpenStreetMap. No SLU-DF continua um plano por serviço e lote (Anexo G).
   Cada um mostra de onde vem: plano atual da pasta (copiado; o original não muda), **vias do
   OpenStreetMap** quando não há plano (o limite do município vem do IBGE, e tudo fica em
   `Base/`), ou só documentos.

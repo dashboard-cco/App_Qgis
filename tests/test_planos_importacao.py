@@ -279,7 +279,7 @@ try:
     cbv.setCurrentIndex(3)
     check(a.info["ligacao"]["campos"]["codigo_ra"]["valores"][v0] == I.codigo_valor(cbv.currentText()),
           "valor ligado à mão")
-    with open(os.path.join(tmp, "contrato", "estado.json"), encoding="utf-8") as fh:
+    with open(os.path.join(tmp, "contrato", "App_Qgis", "Contrato", "estado.json"), encoding="utf-8") as fh:
         salvo = I.anterior(json.load(fh), origem, "Circuitos", plano)
     check(salvo and salvo["campos"]["codigo_ra"]["origem"] == "Regiao", "ligação salva no estado.json")
     a.cb_origem.setCurrentIndex(0)

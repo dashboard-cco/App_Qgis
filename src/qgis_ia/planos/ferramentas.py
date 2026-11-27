@@ -8,6 +8,10 @@ o perfil do contrato sem precisar de chave de API.
 import json
 import os
 
+try:
+    from .. import pastas as PA
+except ImportError:  # testes
+    import pastas as PA
 from . import checklist, documentos, perfil
 
 JANELA = None          # janela aberta (registrada por JanelaPlanos)
@@ -35,14 +39,14 @@ def _pasta():
 
 def _estado(pasta):
     try:
-        with open(os.path.join(pasta, ARQ_ESTADO), encoding="utf-8") as f:
+        with open(PA.arquivo(pasta, ARQ_ESTADO, criar=True), encoding="utf-8") as f:
             return json.load(f)
     except (OSError, ValueError):
         return {"documentos": [], "servicos": [], "manuais": {}}
 
 
 def _docs(pasta):
-    cache = os.path.join(pasta, PASTA_TEXTOS)
+    cache = PA.arquivo(pasta, PASTA_TEXTOS, criar=True)
     out = []
     for c in _estado(pasta).get("documentos", []):
         if os.path.exists(c):
@@ -63,7 +67,7 @@ def _doc(pasta, nome):
 
 
 def _perfil(pasta):
-    arq = os.path.join(pasta, ARQ_PERFIL)
+    arq = PA.arquivo(pasta, ARQ_PERFIL, criar=True)
     return perfil.carregar(arq) if os.path.exists(arq) else None
 
 
@@ -127,9 +131,9 @@ def planos_ler_perfil(secao=""):
 
 def planos_iniciar_perfil():
     pasta = _pasta()
-    arq = os.path.join(pasta, ARQ_PERFIL)
+    arq = PA.arquivo(pasta, ARQ_PERFIL, criar=True)
     if os.path.exists(arq):
-        os.replace(arq, os.path.join(pasta, "contrato_anterior.json"))
+        os.replace(arq, PA.arquivo(pasta, "contrato_anterior.json"))
     p = perfil.vazio()
     p["_meta"]["origem"] = "Claude (MCP)"
     p["_meta"]["documentos"] = [d["nome"] for d in _docs(pasta)]
@@ -156,7 +160,7 @@ def planos_salvar_secao(secao, dados, acrescentar=False):
         return {"ok": False, "gravado": False, "erros": erros[:40],
                 "total_erros": len(erros)}
     pasta = _pasta()
-    arq = os.path.join(pasta, ARQ_PERFIL)
+    arq = PA.arquivo(pasta, ARQ_PERFIL, criar=True)
     p = _perfil(pasta) or perfil.vazio()
     p.setdefault("_meta", {}).setdefault("origem", "Claude (MCP)")
     if secao != "contrato" and acrescentar:
@@ -238,7 +242,7 @@ def planos_adequar_frota(plano, metodo="auto", distancia=1500, max_receptores=3,
     if arq:
         if not os.path.exists(arq):
             raise FileNotFoundError(f"Histórico não encontrado: {arq}")
-        hist = H.ler(arq, cache=os.path.join(pasta, "historico_cache.json"))
+        hist = H.ler(arq, cache=PA.arquivo(pasta, "historico_cache.json", criar=True))
     # padrão = o que está escolhido na aba Frota e equipe
     op = _estado(pasta).get("frota_opcoes") or {}
     if equipar is None:
@@ -332,7 +336,7 @@ def planos_importar(origem, camada_origem, plano, camada_destino, campos=None, s
     lig["substituir"] = bool(substituir)
     rel = importacao.executar(lig, p, srv, gravar=bool(aplicar))
     importacao.guardar(estado, lig)
-    with open(os.path.join(pasta, ARQ_ESTADO), "w", encoding="utf-8") as fh:
+    with open(PA.arquivo(pasta, ARQ_ESTADO, criar=True), "w", encoding="utf-8") as fh:
         json.dump(estado, fh, ensure_ascii=False, indent=2)
     if JANELA is not None:
         try:

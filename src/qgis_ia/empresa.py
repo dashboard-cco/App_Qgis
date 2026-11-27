@@ -53,15 +53,37 @@ def arquivo(pasta):
 
 # ====================================================================== identificação
 def ident_veiculo(sigla, lote, turno, n):
+    """CC01-D01 (sigla + lote, turno, nº). Sem sigla de letras (item do edital, ex.: 1.1):
+    S1.1-L01-D01."""
     lt = f"{int(lote):02d}" if str(lote).isdigit() else str(lote)
-    return f"{sigla or 'V'}{lt}-{(turno or 'D')[0].upper()}{n:02d}"
+    t = (turno or "D")[0].upper()
+    sigla = sigla or "V"
+    if not sigla.isalpha():
+        sigla = sigla if sigla.startswith("S") else f"S{sigla}"
+        return f"{sigla}-L{lt}-{t}{n:02d}"
+    return f"{sigla}{lt}-{t}{n:02d}"
+
+
+NAO_VEICULO = ("cacamba", "conteiner", "container", "papeleira", "lixeira", "cesto",
+               "rocadeira", "soprador", "ferramenta", "carrinho", "lutocar", "bombona",
+               "equipamento de protecao", "epi", "balanca", "kit", "placa", "sinalizacao",
+               "banheiro", "capinadeira")
+
+
+def eh_veiculo(nome):
+    """Veículo com placa (caminhão, varredeira, carro…) — não caçamba, contêiner, carrinho."""
+    n = _sa(nome)
+    return not any(k in n for k in NAO_VEICULO) or n.startswith("caminhao")
 
 
 def veiculos_do_edital(p, servico, lote, sigla):
-    """Frota do edital para o serviço e lote, já com a identificação de cada veículo."""
+    """Frota do edital para o serviço e lote, já com a identificação de cada veículo
+    (só veículos: caçambas, contêineres e carrinhos ficam de fora)."""
     out = []
     for r in p.get("recursos") or []:
         if r.get("categoria") != "equipamento" or r.get("servico") != servico:
+            continue
+        if not eh_veiculo(r.get("nome")):
             continue
         if r.get("lote") and str(r["lote"]) != str(lote):
             continue
@@ -108,7 +130,7 @@ def ler(pasta):
     "pessoal": [...], "contatos": [...], "procedimentos": {servico|"": texto}}."""
     arq = arquivo(pasta)
     out = {"arquivo": arq, "empresa": {}, "veiculos": [], "pessoal": [], "contatos": [],
-           "procedimentos": {}}
+           "procedimentos": {}, "locais": []}
     if not arq:
         return out
     from openpyxl import load_workbook
@@ -128,6 +150,8 @@ def ler(pasta):
                     return v
             return ""
 
+        if nome.startswith("_") or "contrato" in nome:
+            continue                     # aba de controle do app / dados do edital
         if "empresa" in nome or "dados" in nome:
             for r in linhas[1:] if cab and cab[0] in ("campo", "item", "dado") else linhas:
                 if len(r) >= 2 and r[0]:
@@ -157,6 +181,13 @@ def ler(pasta):
                     out["contatos"].append({"nome": str(n), "funcao": str(col(d, "funcao", "cargo")),
                                             "telefone": str(col(d, "telefone", "fone", "celular")),
                                             "email": str(col(d, "mail"))})
+        elif "loca" in nome:
+            for d in dados:
+                n = col(d, "nome", "local")
+                if n or col(d, "tipo"):
+                    out["locais"].append({"tipo": str(col(d, "tipo")), "nome": str(n),
+                                          "endereco": str(col(d, "endereco")),
+                                          "servicos": str(col(d, "servico"))})
         elif "proced" in nome:
             for d in dados:
                 t = col(d, "texto", "procedimento", "descricao")
@@ -273,12 +304,229 @@ def textos(p, servico, lote, sigla, turnos, emp, titulos):
         elif k == "procedimentos":
             pr = emp.get("procedimentos") or {}
             txt = pr.get(servico) or pr.get("") or ""
+        elif k == "destino":
+            ls = [x for x in emp.get("locais") or []
+                  if not x.get("servicos") or servico in re.split(r"[,;\s]+", x["servicos"])]
+            txt = "\n".join(f"{x['tipo']}: {x['nome']}" + (f" — {x['endereco']}" if x["endereco"]
+                                                           else "") for x in ls if x.get("nome"))
         elif k == "servico" and serv:
             txt = f"{serv.get('nome', '')}" + (f", {serv['frequencia']}" if serv.get("frequencia")
                                                else "") + "."
         if txt.strip():
             out[t] = txt.strip()
     return out
+
+
+# ====================================================================== preencher com o edital
+PEDIDO_PLANILHA = """Monte, a partir do edital, os dados que a empresa contratada vai usar \
+nos planos. Os dados vêm pela entrada padrão em JSON: os serviços (com código e fonte), \
+insumos, regras, equipes e os TRECHOS do edital/anexos (documento e página).
+
+Responda SÓ com um JSON:
+{"procedimentos": {"<código do serviço>": "<como o serviço é executado, conforme o edital: \
+saída da garagem, execução, cuidados exigidos, pesagem/descarga, destinação e retorno; 3 a 8 \
+frases; cite a fonte entre parênteses, ex.: (Anexo II, p. 4)>"},
+ "locais": [{"tipo": "garagem|transbordo|aterro|triagem|ecoponto|cemitério|unidade de saúde|\
+compostagem|outro", "nome": "...", "endereco": "... ou vazio", "servicos": "códigos separados \
+por vírgula", "fonte": "documento, p. N"}],
+ "responsaveis": [{"funcao": "ex.: Engenheiro preposto", "exigencia": "o que o edital exige \
+dessa função", "fonte": "documento, p. N"}]}
+
+Regras: use só o que está nos trechos; não invente endereços nem nomes. Locais que o edital \
+manda a empresa indicar (garagem, transbordo próprio…) entram com endereco "[A DEFINIR pela \
+empresa]". Um procedimento para cada serviço da lista."""
+
+
+def _argumentos_planilha():
+    try:
+        from .planos import redacao as R
+    except ImportError:
+        from planos import redacao as R
+    return ["-p", PEDIDO_PLANILHA, "--model", R.MODELO, "--tools", "", "--strict-mcp-config",
+            "--output-format", "json"]
+
+
+def dados_edital(p, docs):
+    """JSON (texto) com serviços, insumos, regras, equipes e os trechos do edital citados."""
+    try:
+        from .planos import redacao as R
+    except ImportError:
+        from planos import redacao as R
+    import json
+    serv = p.get("servicos") or []
+    fontes = [s.get("fonte") for s in serv] + [i.get("fonte") for i in p.get("insumos") or []]
+    fontes += [e.get("fonte") for e in p.get("equipes") or []]
+    return json.dumps({
+        "contrato": p.get("contrato"),
+        "servicos": [{k: s.get(k) for k in ("codigo", "nome", "frequencia", "lotes", "fonte")}
+                     for s in serv],
+        "insumos": [{k: i.get(k) for k in ("nome", "descricao", "fornecido_pelo_contratante",
+                                           "fonte")} for i in p.get("insumos") or []],
+        "regras": p.get("regras") or [],
+        "equipes": p.get("equipes") or [],
+        "trechos_do_edital": R.trechos(docs, [f for f in fontes if f], folga=0),
+    }, ensure_ascii=False)
+
+
+def _assinatura(wb):
+    """Resumo do conteúdo das abas (menos a de controle) — muda se o usuário mexer."""
+    import hashlib
+    h = hashlib.sha1()
+    for ws in wb.worksheets:
+        if ws.title.startswith("_"):
+            continue
+        h.update(ws.title.encode("utf-8"))
+        for r in ws.iter_rows(values_only=True):
+            cel = [("" if v is None else str(v).strip()) for v in r]
+            while cel and not cel[-1]:
+                cel.pop()
+            if cel:
+                h.update(("\x1f".join(cel) + "\x1e").encode("utf-8"))
+    return h.hexdigest()
+
+
+def _gerada_pelo_app_intacta(arq):
+    """True se a planilha foi criada pelo app e ninguém a salvou depois (pode regravar)."""
+    from openpyxl import load_workbook
+    try:
+        wb = load_workbook(arq, read_only=True)
+    except Exception:
+        return False
+    try:
+        if "_app" in wb.sheetnames:
+            v = {r[0]: r[1] for r in wb["_app"].iter_rows(values_only=True) if r and len(r) > 1}
+            return bool(v.get("assinatura")) and v["assinatura"] == _assinatura(wb)
+        # modelo antigo do app: nada preenchido pelo usuário
+        emp = ler(os.path.dirname(arq))
+        return not (any(emp["empresa"].values()) or emp["contatos"] or emp["procedimentos"]
+                    or any(v.get("placa") for v in emp["veiculos"]))
+    finally:
+        wb.close()
+
+
+def preencher_do_edital(pasta, p, docs, usar_claude=True, executar=None, progresso=None):
+    """Planilha da empresa montada com o que já está no edital: veículos (com código, só
+    veículos), pessoal, funções responsáveis, procedimentos por serviço e locais (o Claude lê
+    os trechos citados). Se a planilha atual já foi mexida pelo usuário, grava
+    planilha_modelo_empresa_sugerida.xlsx ao lado. Devolve {"arquivo", "substituiu",
+    "procedimentos", "locais", "veiculos", "pessoal", "claude"}."""
+    import json
+    import shutil
+    import time
+    info = {"claude": None, "erro_claude": ""}
+    extra = {"procedimentos": {}, "locais": [], "responsaveis": []}
+    if usar_claude:
+        if progresso:
+            progresso("Claude lendo os procedimentos, locais e responsáveis no edital…")
+        try:
+            if executar is None:
+                try:
+                    from .planos import redacao as R
+                except ImportError:
+                    from planos import redacao as R
+                texto = R.executar_claude(dados_edital(p, docs), args=_argumentos_planilha())
+            else:
+                texto = executar(dados_edital(p, docs))
+            m = re.search(r"\{.*\}", texto, re.S)
+            extra.update(json.loads(m.group()) if m else {})
+            info["claude"] = True
+        except Exception as e:
+            info["claude"] = False
+            info["erro_claude"] = str(e)
+
+    from openpyxl import Workbook
+    from openpyxl.styles import Alignment, Font, PatternFill
+    wb = Workbook()
+    cab_fill = PatternFill("solid", fgColor="1F4E78")
+
+    def aba(titulo, colunas, larguras, primeira=False):
+        ws = wb.active if primeira else wb.create_sheet()
+        ws.title = titulo
+        ws.append(colunas)
+        for c, w in zip(ws[1], larguras):
+            c.font = Font(bold=True, color="FFFFFF")
+            c.fill = cab_fill
+            ws.column_dimensions[c.column_letter].width = w
+        return ws
+
+    ws = aba("Empresa", ["Campo", "Valor", "Observação"], [28, 50, 60], primeira=True)
+    for c in ("Razão social", "CNPJ", "Endereço", "Preposto", "Responsável técnico",
+              "Telefone", "E-mail"):
+        ws.append([c, "", "Dado da empresa (não está no edital)"])
+    serv = p.get("servicos") or []
+    lotes_perfil = [re.sub(r"\D", "", l["codigo"]) or l["codigo"] for l in p.get("lotes") or []]
+    wv = aba("Veículos", ["Identificação", "Serviço", "Lote", "Turno", "Tipo (edital)",
+                          "Placa (opcional)", "Fonte"], [18, 9, 6, 9, 55, 16, 34])
+    wp = aba("Pessoal", ["Serviço", "Lote", "Turno", "Função", "Quantidade", "Fonte"],
+             [9, 6, 9, 40, 11, 34])
+    nv = npes = 0
+    for s in serv:
+        sig = (s.get("sigla") or "").strip() or f"S{s['codigo']}"
+        for lote in [re.sub(r"\D", "", x) or x for x in s.get("lotes") or []] or lotes_perfil or ["1"]:
+            fonte = next((r.get("fonte") for r in p.get("recursos") or []
+                          if r.get("servico") == s["codigo"]), None) or {}
+            ftxt = fonte.get("documento", "") + (f", p. {fonte['paginas']}"
+                                                 if fonte.get("paginas") else "")
+            for v in veiculos_do_edital(p, s["codigo"], lote, sig):
+                wv.append([v["identificacao"], s["codigo"], lote, v["turno"], v["tipo"], "", ftxt])
+                nv += 1
+            for x in pessoal_do_edital(p, s["codigo"], lote):
+                wp.append([s["codigo"], lote, x["turno"], x["funcao"], x["quantidade"], ftxt])
+                npes += 1
+    wc = aba("Contatos", ["Nome", "Função", "Telefone", "E-mail", "O que o edital exige",
+                          "Fonte"], [30, 32, 16, 30, 60, 30])
+    resp = extra.get("responsaveis") or [{"funcao": f, "exigencia": "", "fonte": ""} for f in
+                                         ("Preposto", "Responsável técnico",
+                                          "Responsável pela operação")]
+    for r in resp:
+        wc.append(["", r.get("funcao", ""), "", "", r.get("exigencia", ""), r.get("fonte", "")])
+    wr = aba("Procedimentos", ["Serviço", "Nome do serviço", "Texto"], [9, 40, 110])
+    for s in serv:
+        t = (extra.get("procedimentos") or {}).get(s["codigo"]) or \
+            "[Escreva como o serviço é executado: saída da garagem, execução, pesagem, descarga e retorno.]"
+        wr.append([s["codigo"], s["nome"], t])
+    wl = aba("Locais", ["Tipo", "Nome", "Endereço", "Serviços", "Fonte"], [16, 40, 50, 16, 30])
+    locais = extra.get("locais") or []
+    if not any(_sa(x.get("tipo")).startswith("garagem") for x in locais):
+        locais = [{"tipo": "garagem", "nome": "Garagem da empresa",
+                   "endereco": "[A DEFINIR pela empresa]", "servicos": "", "fonte": ""}] + locais
+    for x in locais:
+        wl.append([x.get("tipo", ""), x.get("nome", ""), x.get("endereco", ""),
+                   x.get("servicos", ""), x.get("fonte", "")])
+    wk = aba("Contrato (edital)", ["Campo", "Valor"], [26, 110])
+    for k, v in (p.get("contrato") or {}).items():
+        if v:
+            wk.append([k.replace("_", " ").capitalize(), str(v)])
+    for w in (wr, wc, wl, wk):
+        for row in w.iter_rows(min_row=2):
+            for c in row:
+                c.alignment = Alignment(wrap_text=True, vertical="top")
+    agora = time.time()
+    assinatura = _assinatura(wb)
+    ctrl = wb.create_sheet("_app")
+    ctrl.append(["gerada_em", agora])
+    ctrl.append(["assinatura", assinatura])
+    ctrl.sheet_state = "hidden"
+
+    atual = arquivo(pasta)
+    substituiu = False
+    if atual and not _gerada_pelo_app_intacta(atual):
+        destino = os.path.join(pasta, NOME + "_sugerida.xlsx")
+    else:
+        destino = atual or os.path.join(pasta, NOME + ".xlsx")
+        if atual:
+            try:
+                from . import pastas as PA
+            except ImportError:
+                import pastas as PA
+            shutil.copy2(atual, PA.arquivo(pasta, "planilha_modelo_empresa_anterior.xlsx",
+                                           criar=True))
+            substituiu = True
+    wb.save(destino)
+    info.update(arquivo=destino, substituiu=substituiu, veiculos=nv, pessoal=npes,
+                procedimentos=sum(1 for s in serv if (extra.get("procedimentos") or {}).get(s["codigo"])),
+                locais=len(locais), responsaveis=len(resp))
+    return info
 
 
 def nome_empresa(emp):

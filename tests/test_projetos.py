@@ -18,6 +18,7 @@ sys.path.insert(0, PLUGIN)
 sys.path.insert(0, os.path.join(PLUGIN, "actions"))
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+import pastas as PA  # noqa: E402
 import projetos as P  # noqa: E402
 
 FALHAS = []
@@ -60,7 +61,7 @@ try:
     d = P.detalhes_sugeridos(L, "P6")
     check(d["lote"] == 1 and d["plano_existente"] == b["caminho"], "sugere lote e plano")
     check(d["turnos"], "turnos")
-    check(d["pasta_saida"] == os.path.join(pasta, "Plano"), "pasta de saída")
+    check(d["pasta_saida"] == os.path.join(pasta, "App_Qgis", "Planos"), "pasta de saída")
     check("O que é o serviço" in d["textos"] and "Horários" in d["textos"]
           and "27 circuitos" in d["textos"]["Planejamento das rotas e frequências"],
           "textos sugeridos")
@@ -79,7 +80,7 @@ try:
     # ------------------------------------------------------------ criar plano
     r = P.criar_plano(dict(d, empresa="Empresa Teste"), carregar=False)
     arq = r["arquivos"]
-    check(arq["gdb"] == os.path.join(pasta, "Plano", "P6_VE01", "VE01.gdb")
+    check(arq["gdb"] == os.path.join(pasta, "App_Qgis", "Planos", "P6_VE01", "VE01.gdb")
           and os.path.isdir(arq["gdb"]) and os.path.isdir(b["caminho"]),
           f"copia o plano existente para a pasta do plano: {arq['gdb']}")
     r_de_novo = P.criar_plano(dict(d, validar=False), carregar=False)
@@ -116,7 +117,10 @@ try:
     A = CT.analisar(so_edital)
     cods = {p["codigo"] for p in A["problemas"]}
     check(A["slu"] and A["servicos"] == list(CT.E.SERVICOS), "só edital SLU: perfil pronto")
-    check(os.path.exists(os.path.join(so_edital, "contrato.json")), "perfil gravado na pasta")
+    check(os.path.exists(os.path.join(so_edital, "App_Qgis", "Contrato", "contrato.json"))
+          and not os.path.exists(os.path.join(so_edital, "contrato.json"))
+          and os.path.isdir(os.path.join(so_edital, "App_Qgis", "Contrato", "textos")),
+          "perfil e cache em App_Qgis\\Contrato")
     check(A["lotes"] == ["1", "2", "3"] and len(A["planos"]) == 36, f"36 planos: {len(A['planos'])}")
     check({"lote_indefinido", "sem_circuitos", "sem_planilha_empresa", "limite_baixado"} <= cods,
           f"problemas do só edital: {cods}")
@@ -149,7 +153,9 @@ try:
     saida = os.path.join(tmp, "todos")
     R = CT.criar(A, ["P6-1", "P5-1", "P9-1", "P3-1", "P2-1"], saida, validar=True, baixar=False)
     check(R["ok"] == 5 and R["falhas"] == 0, f"criou 5: {[r.get('erro') for r in R['planos']]}")
-    check(os.path.exists(R["relatorio"]), "relatório")
+    check(os.path.exists(R["relatorio"]) and os.path.dirname(R["relatorio"]) ==
+          os.path.join(pasta, "App_Qgis", "Relatorios"), "relatório em App_Qgis\\Relatorios")
+    check(os.path.exists(os.path.join(pasta, "App_Qgis", "LEIA-ME.txt")), "LEIA-ME da estrutura")
     check(R["empresa"] and os.path.basename(R["empresa"]) == "planilha_modelo_empresa.xlsx",
           "criou o modelo da planilha da empresa")
     por = {r["id"]: r for r in R["planos"]}
@@ -168,6 +174,24 @@ try:
     check(esc.get("lotes") == ["1"] and esc.get("pasta_saida") == saida, "escolhas guardadas")
     check(not any(d.startswith(saida) for d in CT.analisar(pasta)["leitura"]["documentos"]),
           "planos criados não entram como documentos")
+
+    # ------------------------------------------------------------ andamento da leitura
+    from planos import leitor_claude as LC
+    an = LC.Andamento(paginas_total=300)
+    pcts = [an.passo({"texto": "x", "ferramenta": "planos_ler_paginas",
+                      "entrada": {"de": 1, "ate": 30}}) for _ in range(4)]
+    check(pcts == sorted(pcts) and 3 < pcts[-1] < 45, f"leitura sobe sem passar de 45%: {pcts}")
+    for s in ("contrato", "documentos", "lotes"):
+        p_ = an.passo({"texto": "g", "ferramenta": "planos_salvar_secao", "entrada": {"secao": s}})
+    check(45 < p_ < 70, f"seções gravadas: {p_}")
+    for s in ("servicos", "camadas", "entregaveis", "insumos", "regras", "recursos", "equipes",
+              "turnos", "pendencias"):
+        p_ = an.passo({"texto": "g", "ferramenta": "planos_salvar_secao", "entrada": {"secao": s}})
+    check(p_ == 98, f"12 seções = 98%: {p_}")
+    ev = LC.interpretar('{"type":"assistant","message":{"content":[{"type":"tool_use",'
+                        '"name":"mcp__qgis-planos__planos_salvar_secao","input":{"secao":"lotes"}}]}}')
+    check(ev["ferramenta"] == "planos_salvar_secao" and ev["entrada"]["secao"] == "lotes",
+          "evento com a ferramenta")
 
     # ------------------------------------------------------------ OCR pelo Claude (simulado)
     from planos import documentos as DOC, ocr as OCR
@@ -193,10 +217,30 @@ try:
         r_ocr = CT.ler_escaneados(AE, executar=claude_falso)
         check(r_ocr[0]["paginas_lidas"] == 1 and pedidos[0][1] == ["pagina_0001.png"]
               and "Read" in pedidos[0][0], f"OCR: {r_ocr} {pedidos}")
-        d = DOC.ler(os.path.join(esc, "AnexoP.pdf"), os.path.join(esc, "textos"))
+        d = DOC.ler(os.path.join(esc, "AnexoP.pdf"), PA.arquivo(esc, "textos"))
         check("VISTORIA" in d["paginas"][0] and not DOC.aviso_sem_texto(d) and d.get("ocr") == [1],
               "texto do OCR no cache do documento")
         check(not CT.analisar(esc)["escaneados"], "depois do OCR não é mais escaneado")
+
+    # ------------------------------------------------------------ documentos do edital (Suzano)
+    from planos import redacao as RED
+    te = CT.tipo_entregavel
+    check(te({"nome": "Plano de Trabalho Operacional", "formato": "Não especificado (documento)",
+              "secoes": ["Setorização do Município", "Rotas detalhadas"]}) == ("texto", True),
+          "plano de trabalho = texto com mapa")
+    check(te({"nome": "Relação de locais de papeleiras", "formato": "Arquivo editável com "
+              "endereços + fotos georreferenciadas"}) == ("planilha", True), "relação = planilha")
+    check(te({"nome": "Documentação de início da operação", "formato": "Documentos"})[0]
+          == "documentos", "licenças = documentos da empresa")
+    check(RED._paginas("4-5, 30") == [4, 5, 30] and RED._paginas("") == [], "páginas citadas")
+    check(RED.ler_resposta('```json\n{"secoes": {"setorizacao do municipio": "x"}}\n```',
+                           ["Setorização do Município", "Rotas"]) == {"Setorização do Município": "x"},
+          "resposta do Claude: título sem acento/maiúscula")
+    check(EMP.eh_veiculo("Caminhão poliguindaste duplo") and EMP.eh_veiculo("Varredeira mecânica")
+          and not EMP.eh_veiculo("Caçamba estacionária") and not EMP.eh_veiculo("Contêiner 1000 L")
+          and EMP.eh_veiculo("Caminhão com caçamba basculante"), "veículo × equipamento")
+    check(EMP.ident_veiculo("S1.1", "1", "Diurno", 3) == "S1.1-L01-D03"
+          and EMP.ident_veiculo("CC", 1, "Noturno", 2) == "CC01-N02", "código dos veículos")
 
     # ------------------------------------------------------------ criar todos (outro edital)
     import base_dados as BD
@@ -241,7 +285,7 @@ try:
                      "jornada": "07:20", "equipamento": "", "observacao": "",
                      "fonte": {"documento": "", "paginas": ""}}]
     check(not PF.valida(pg), f"perfil genérico válido: {PF.valida(pg)[:3]}")
-    PF.salvar(pg, os.path.join(gen, "contrato.json"))
+    PF.salvar(pg, os.path.join(gen, "contrato.json"))      # lugar antigo: o app move
     with open(os.path.join(gen, "Edital.txt"), "w", encoding="utf-8") as fh:
         fh.write("Pregão 12/2026. Coleta de lixo domiciliar.\n" * 20)
 
@@ -267,19 +311,39 @@ try:
         return _json.dumps(osm).encode()
 
     G = CT.analisar(gen)
-    check(not G["slu"] and len(G["planos"]) == 1 and G["planos"][0]["id"] == "S1-1",
-          f"edital genérico: {[x['id'] for x in G['planos']]}")
+    check(not os.path.exists(os.path.join(gen, "contrato.json")) and
+          os.path.exists(os.path.join(gen, "App_Qgis", "Contrato", "contrato.json")),
+          "contrato.json antigo movido para App_Qgis\\Contrato")
+    check(not G["slu"] and len(G["planos"]) == 1 and G["planos"][0]["id"] == "E1-1"
+          and G["planos"][0]["nome"] == "Memorial",
+          f"edital genérico: 1 plano com os 3 arquivos: {[x['id'] for x in G['planos']]}")
     pl = G["planos"][0]
     check(pl["osm"] and pl["geo"] == ".gpkg" and "CL01.gpkg" in pl["arquivos"],
           f"genérico: base OSM e .gpkg do edital: {pl}")
-    RG = CT.criar(G, ["S1-1"], os.path.join(gen, "Planos"), baixar_fn=falso)
+    pedidos_red = []
+
+    def claude_redator(entrada):
+        import json as _j
+        d = _j.loads(entrada)
+        pedidos_red.append(d)
+        return _j.dumps({"secoes": {
+            "Descrição do serviço": "A coleta domiciliar será feita diariamente (Edital, p. 3).",
+            "Horários de trabalho": "Turno diurno das 07:00 às 15:20.\n[A DEFINIR: horário "
+                                    "do sábado, pela contratante]"}})
+
+    RG = CT.criar(G, ["E1-1"], os.path.join(gen, "Planos"), baixar_fn=falso,
+                  executar_redacao=claude_redator)
     rg = RG["planos"][0]
     check(rg.get("ok"), f"genérico criado: {rg.get('erro')}")
     arqs = rg.get("arquivos") or {}
-    check(os.path.exists(arqs.get("plano", "")) and arqs["plano"].endswith("CL01.gpkg"),
-          f"gpkg: {arqs}")
+    check(os.path.exists(arqs.get("mapa", "")) and arqs["mapa"].endswith("CL01.gpkg"),
+          f"gpkg com o nome do edital: {arqs}")
+    check(rg.get("redigido") and rg.get("a_definir") == 1 and pedidos_red
+          and pedidos_red[0]["documento"]["secoes"][0] == "Descrição do serviço"
+          and pedidos_red[0]["veiculos_identificados"][0]["identificacao"] == "CL01-D01",
+          f"Claude recebeu o documento, as seções e os veículos: {rg.get('redigido')}")
     from osgeo import ogr as _ogr
-    dsg = _ogr.Open(arqs["plano"])
+    dsg = _ogr.Open(arqs["mapa"])
     check({dsg.GetLayer(i).GetName() for i in range(dsg.GetLayerCount())} >= {"rotas", "setores"},
           "camadas do edital no plano")
     dsg = None
@@ -292,8 +356,9 @@ try:
     docx = next((v for k, v in arqs.items() if k.startswith("docx")), "")
     import zipfile as _zip
     xml = _zip.ZipFile(docx).read("word/document.xml").decode("utf-8") if docx else ""
-    check("CL01-D01" in xml and "Coletor: 9" in xml and "07:00" in xml and "Arial 12" in xml,
-          "texto com frota identificada, equipe, horário e como fazer")
+    check("CL01-D01" in xml and "Coletor: 9" in xml and "07:00" in xml and "Arial 12" in xml
+          and "diariamente (Edital, p. 3)" in xml and "[A DEFINIR" in xml,
+          "texto com frota identificada, equipe, horário, como fazer e redação do Claude")
     check("Contatos" in rg["pendentes"], f"contatos a preencher: {rg['pendentes']}")
     check(any(k.startswith("xlsx") for k in arqs) and "xlsx_conferencia" in arqs, "tabela e conferência")
     # a empresa preenche os contatos na planilha e cria de novo
@@ -304,11 +369,46 @@ try:
     wb["Contatos"]["C2"] = "(11) 9999-0000"
     wb.save(arq_emp)
     shutil.rmtree(os.path.join(gen, "Planos"))
-    RG2 = CT.criar(CT.analisar(gen), ["S1-1"], os.path.join(gen, "Planos"), baixar_fn=falso)
+    RG2 = CT.criar(CT.analisar(gen), ["E1-1"], os.path.join(gen, "Planos"), baixar_fn=falso,
+                   redigir=False)
     docx = next(v for k, v in RG2["planos"][0]["arquivos"].items() if k.startswith("docx"))
     xml = _zip.ZipFile(docx).read("word/document.xml").decode("utf-8")
     check("Fulano de Tal" in xml and "Contatos" not in RG2["planos"][0]["pendentes"],
           "contatos da planilha da empresa no texto")
+
+    # planilha da empresa montada com o edital (Claude simulado)
+    def claude_planilha(entrada):
+        d = _json.loads(entrada)
+        check(d["servicos"][0]["codigo"] == "S1" and "trechos_do_edital" in d,
+              "dados do edital para a planilha")
+        return _json.dumps({
+            "procedimentos": {"S1": "Os caminhões saem da garagem às 7h e coletam porta a porta "
+                                    "(Edital, p. 3)."},
+            "locais": [{"tipo": "aterro", "nome": "Aterro Municipal", "endereco": "Estrada X, km 5",
+                        "servicos": "S1", "fonte": "Edital, p. 4"}],
+            "responsaveis": [{"funcao": "Engenheiro responsável", "exigencia": "CREA ativo",
+                              "fonte": "Edital, p. 9"}]})
+
+    info = EMP.preencher_do_edital(gen, pg, [], executar=claude_planilha)
+    check(info["arquivo"].endswith("planilha_modelo_empresa_sugerida.xlsx"),
+          "planilha já editada pelo usuário: sugestão ao lado, nada apagado")
+    check(EMP.ler(gen)["contatos"][0]["nome"] == "Fulano de Tal", "planilha do usuário intacta")
+    os.remove(EMP.arquivo(gen))
+    os.remove(info["arquivo"])
+    info = EMP.preencher_do_edital(gen, pg, [], executar=claude_planilha)
+    e2 = EMP.ler(gen)
+    check(info["claude"] and info["veiculos"] == 3 and info["procedimentos"] == 1
+          and e2["procedimentos"].get("S1", "").startswith("Os caminhões")
+          and any(x["nome"] == "Aterro Municipal" for x in e2["locais"])
+          and any(x["tipo"] == "garagem" and "A DEFINIR" in x["endereco"] for x in e2["locais"])
+          and [v["identificacao"] for v in e2["veiculos"]][:1] == ["CL01-D01"],
+          f"planilha com o edital: {info}")
+    info2 = EMP.preencher_do_edital(gen, pg, [], executar=claude_planilha)
+    check(info2["arquivo"].endswith("planilha_modelo_empresa.xlsx") and info2["substituiu"],
+          "planilha do app ainda intacta: refaz e guarda a anterior")
+    txt_dest = EMP.textos(pg, "S1", "1", "CL", ["Diurno"], e2, ["Local de destinação"])
+    check("Aterro Municipal — Estrada X, km 5" in txt_dest.get("Local de destinação", ""),
+          "locais no texto do plano")
 
     # ------------------------------------------------------------ janela (sem tela)
     from qgis.core import QgsApplication
@@ -403,6 +503,23 @@ try:
         check(dlg.bt_criar.text() == "Criar 0 plano(s)", "desmarca o lote")
         dlg._ler_ia()
         check(chamadas[-1][0] == pasta and chamadas[-1][2] is True, "ler o edital com o Claude")
+        # barra de progresso ligada à leitura que acontece na janela Planos do Contrato
+        from planos.janela import _Sinal
+
+        class JanelaFalsa:
+            _sinal = _Sinal()
+
+        jf = JanelaFalsa()
+        dlg.abrir_planos = lambda *a, **k: jf
+        dlg._ler_ia()
+        jf._sinal.leitura.emit(37, "Lendo Edital.pdf, p. 1-30")
+        check(dlg.barra_ia.isVisibleTo(dlg) and dlg.barra_ia.barra.value() == 37
+              and "Edital.pdf" in dlg.barra_ia.lb_passo.text(), "barra de progresso na tela")
+        with mock.patch.object(dlg, "analisar") as an_:
+            jf._sinal.leitura_fim.emit(True, "Perfil montado")
+        check(an_.called and dlg.barra_ia.barra.value() == 100, "fim da leitura: analisa de novo")
+        jf._sinal.leitura.emit(50, "outra")
+        check(dlg.barra_ia.barra.value() == 100, "desligada depois do fim")
 finally:
     shutil.rmtree(tmp, ignore_errors=True)
 

@@ -29,12 +29,14 @@ import unicodedata
 
 try:
     from . import base_dados as BD
+    from . import pastas as PA
     from . import edital_slu as E
     from . import empresa as EMP
     from . import projetos as P
     from .planos import documentos, estrutura, importacao, perfil as PF, validacao as V
 except ImportError:  # testes
     import base_dados as BD
+    import pastas as PA
     import edital_slu as E
     import empresa as EMP
     import projetos as P
@@ -93,7 +95,7 @@ def _eh_edital_slu(textos):
 
 def _ler_documentos(pasta, caminhos, progresso=None, cancelado=None):
     docs, erros = [], []
-    cache = os.path.join(pasta, PASTA_TEXTOS)
+    cache = PA.arquivo(pasta, PASTA_TEXTOS, criar=True)
     for i, c in enumerate(caminhos):
         if cancelado and cancelado():
             break
@@ -111,7 +113,7 @@ def _ler_documentos(pasta, caminhos, progresso=None, cancelado=None):
 
 def escolhas(pasta):
     try:
-        with open(os.path.join(pasta, ARQ_ESCOLHAS), encoding="utf-8") as f:
+        with open(PA.arquivo(pasta, ARQ_ESCOLHAS), encoding="utf-8") as f:
             return json.load(f)
     except (OSError, ValueError):
         return {}
@@ -119,7 +121,7 @@ def escolhas(pasta):
 
 def guardar_escolhas(pasta, d):
     try:
-        with open(os.path.join(pasta, ARQ_ESCOLHAS), "w", encoding="utf-8") as f:
+        with open(PA.arquivo(pasta, ARQ_ESCOLHAS, criar=True), "w", encoding="utf-8") as f:
             json.dump(d, f, ensure_ascii=False, indent=2)
     except OSError:
         pass
@@ -171,7 +173,7 @@ def _arq(s):
 def analisar(pasta, progresso=None, cancelado=None):
     esc = escolhas(pasta)
     # o que o app gera (planos criados, cache de textos) não é arquivo de entrada
-    pular = [os.path.join(pasta, "Planos"), os.path.join(pasta, PASTA_TEXTOS)]
+    pular = [PA.raiz(pasta), os.path.join(pasta, "Planos"), os.path.join(pasta, PASTA_TEXTOS)]
     if esc.get("pasta_saida"):
         pular.append(esc["pasta_saida"])
     leitura = P.ler_pasta(pasta, pular=pular)
@@ -208,7 +210,7 @@ def analisar(pasta, progresso=None, cancelado=None):
     textos = "\n".join("\n".join(d["paginas"]) for d in docs)
 
     # ------------------------------------------------------------ perfil do contrato
-    arq_perfil = os.path.join(pasta, ARQ_PERFIL)
+    arq_perfil = PA.arquivo(pasta, ARQ_PERFIL)
     p = None
     if os.path.exists(arq_perfil):
         try:
@@ -219,6 +221,7 @@ def analisar(pasta, progresso=None, cancelado=None):
                      "Ler o edital de novo com o Claude.", acao="ler_ia")
     if p is None and textos.strip() and _eh_edital_slu(textos):
         p = PF.perfil_slu_df()
+        PA.contrato(pasta, criar=True)
         PF.salvar(p, arq_perfil)
         A["perfil_origem"] = "perfil pronto do SLU-DF (Pregão 90005/2026)"
     if p is None:
@@ -272,7 +275,11 @@ def analisar(pasta, progresso=None, cancelado=None):
 
     desmarcados = set(esc.get("desmarcados") or [])
     hoje = _dt.date.today()
-    for s in p.get("servicos") or []:
+    por_documento = not A["slu"] and bool(p.get("entregaveis"))
+    if por_documento:
+        # qualquer edital: um plano por DOCUMENTO exigido (que junta os serviços dele)
+        _planos_por_entregavel(A, p, lotes_perfil, lotes_marcados, desmarcados, bancos, problema)
+    for s in (p.get("servicos") or []) if not por_documento else []:
         cod, sigla = s["codigo"], s.get("sigla") or ""
         lotes_s = [_lote(x) for x in s.get("lotes") or []] or lotes_perfil
         arqs_base = arquivos_do_plano(p, cod, "1", sigla)
@@ -349,8 +356,10 @@ def analisar(pasta, progresso=None, cancelado=None):
         problema(ATENCAO, "sem_planilha_empresa", "Planilha da empresa não encontrada",
                  f"Sem a {EMP.NOME}, o texto sai com a frota e o pessoal do edital (veículos "
                  "identificados por código, ex.: CC01-D01) e sem contatos e procedimentos.",
-                 f"Salve a {EMP.NOME}.xlsx na pasta (o app cria um modelo já com a frota e o "
-                 "pessoal do edital ao clicar em 'Planilha da empresa').", acao="empresa")
+                 "Clique em 'Planilha da empresa': o app monta a planilha com o que já está no "
+                 "edital (veículos com código, pessoal, procedimentos de cada serviço, locais e "
+                 "funções responsáveis). Depois complete os dados da empresa e salve.",
+                 acao="empresa")
     com_base = [x["id"] for x in A["planos"] if x["plano_existente"]
                 and any(r.get("servico") == x["servico"] and r.get("categoria") == "equipamento"
                         for r in p.get("recursos") or [])]
@@ -367,6 +376,117 @@ def analisar(pasta, progresso=None, cancelado=None):
                      "número de veículos, não a jornada.",
                      "Coloque na pasta o histórico (ex.: TabelaPadrão.xlsx).", com_base)
     return _fim(A)
+
+
+GEO_CHAVES = ("setoriz", "rota", "roteir", "mapa", "mapeamento", "georrefer", "trecho")
+DOC_EMPRESA = ("documentacao", "licenca", "certid", "autorizac", "alvara", "atestado")
+CAMADAS_GENERICAS = [
+    ("setores", "MultiPolygon", ["codigo", "nome", "servico", "frequencia", "turno", "dias",
+                                 "observacao"]),
+    ("rotas", "MultiLineString", ["codigo", "setor", "servico", "turno", "ordem", "observacao"]),
+    ("pontos", "Point", ["codigo", "tipo", "servico", "endereco", "observacao"]),
+]
+
+
+def tipo_entregavel(e):
+    """('texto' | 'mapa' | 'planilha' | 'documentos', pede_mapa)."""
+    nome = _sa(e.get("nome"))
+    t = _sa(" ".join([e.get("nome") or "", e.get("formato") or "", e.get("descricao") or "",
+                      e.get("como_fazer") or "", " ".join(e.get("secoes") or [])]))
+    ext = _ext(e)
+    geo = ext in (".gdb", ".gpkg", ".shp", ".kml")
+    mapa = geo or any(k in t for k in GEO_CHAVES)
+    if any(k in nome for k in DOC_EMPRESA):
+        return "documentos", False
+    if geo and not e.get("secoes"):
+        return "mapa", True
+    if ext == ".xlsx" or "planilha" in t or "arquivo editavel" in t or \
+            nome.startswith(("relacao", "lista", "cadastro", "tabela")):
+        return "planilha", mapa
+    return "texto", mapa
+
+
+def sigla_auto(s):
+    """Sigla do serviço, ou um código a partir do item do edital (1.1 → S1.1)."""
+    return (s.get("sigla") or "").strip() or f"S{s['codigo']}"
+
+
+def _nome_arquivo(e, sigla, lote, padrao):
+    pad = (e.get("nome_arquivo") or "").strip()
+    if not pad:
+        return padrao
+    return (pad.replace("{sigla}", sigla).replace("{lote}", _lote2(lote))
+            .replace("{codigo}", sigla).replace("{servico}", sigla))
+
+
+def _planos_por_entregavel(A, p, lotes_perfil, lotes_marcados, desmarcados, bancos, problema):
+    """Um plano por conjunto de serviços dos documentos exigidos: os arquivos do edital para
+    os mesmos serviços (texto, mapa, tabela) ficam juntos no mesmo plano."""
+    serv = {s["codigo"]: s for s in p.get("servicos") or []}
+    lotes_de = {c: [_lote(x) for x in s.get("lotes") or []] or lotes_perfil
+                for c, s in serv.items()}
+    grupos, cobertos, empresa_docs = {}, set(), []
+    for k, e in enumerate(p.get("entregaveis") or []):
+        tipo, mapa = tipo_entregavel(e)
+        servs = [c for c in (e.get("servicos") or list(serv)) if c in serv] or list(serv)
+        cobertos |= set(servs)
+        if tipo == "documentos":
+            empresa_docs.append(e["nome"])
+            continue
+        grupos.setdefault(tuple(sorted(servs, key=list(serv).index)), []).append((k, tipo, mapa))
+    for gi, (servs, itens) in enumerate(grupos.items(), start=1):
+        textos = [k for k, t, _ in itens if t == "texto"]
+        nome = p["entregaveis"][(textos or [itens[0][0]])[0]]["nome"]
+        pede_mapa = any(m for _, _, m in itens)
+        lotes = sorted({lt for c in servs for lt in lotes_de[c]}, key=lambda x: (len(x), x))
+        for lote in lotes:
+            sl = [c for c in servs if lote in lotes_de[c]]
+            pid = f"E{gi}-{lote}"
+            nome_pasta = f"{gi:02d}_{_arq(nome)[:45]}_L{lote}"
+            sigla = sigla_auto(serv[sl[0]])
+            atual = next((b for b in bancos if b["circuitos"] and
+                          set(b.get("servicos_perfil") or []) & set(sl)), None)
+            turnos = sorted({t["nome"] for t in p.get("turnos") or [] if t.get("servico") in sl}) \
+                or ["Diurno"]
+            arqs = []
+            for k, t, _ in itens:
+                e = p["entregaveis"][k]
+                ext = {"texto": ".docx", "planilha": ".xlsx", "mapa": ".gpkg"}[t]
+                arqs.append(_nome_arquivo(e, sigla, lote, f"{nome_pasta}{ext}"
+                                          if t != "planilha" or len(itens) == 1 else
+                                          f"{nome_pasta}_{_arq(e['nome'])[:30]}.xlsx"))
+            mapa_arq = next((a for a in arqs if a.lower().endswith(".gpkg")), None)
+            if pede_mapa and not mapa_arq:
+                mapa_arq = f"{nome_pasta}.gpkg"
+                arqs.append(mapa_arq)
+            pl = {"id": pid, "servico": sl[0], "servicos": sl, "sigla": "", "nome": nome,
+                  "lote": lote, "plano_existente": atual["caminho"] if atual else "",
+                  "circuitos": atual["circuitos"] if atual else 0, "turnos": turnos,
+                  "geo": ".gpkg" if pede_mapa else "", "osm": bool(pede_mapa and not atual),
+                  "entregaveis": [k for k, _, _ in itens], "entregavel": itens[0][0],
+                  "tipos": {k: t for k, t, _ in itens}, "tipo": "texto" if textos else itens[0][1],
+                  "pasta_nome": nome_pasta, "arquivos": arqs, "mapa_arquivo": mapa_arq,
+                  "marcado": lote in lotes_marcados and pid not in desmarcados,
+                  "problemas": []}
+            partes = sorted({{"texto": "texto redigido do edital", "planilha": "planilha",
+                              "mapa": "mapa"}[t] for _, t, _ in itens})
+            itens_txt = ", ".join(sl[:6]) + ("…" if len(sl) > 6 else "")
+            pl["origem"] = (" + ".join(partes)
+                            + (" (vias do OpenStreetMap)" if pl["osm"] else "")
+                            + f" · itens {itens_txt}")
+            A["planos"].append(pl)
+    fora = [c for c in serv if c not in cobertos]
+    if fora:
+        problema(INFO, "servicos_sem_documento", "Serviços sem documento exigido",
+                 "O edital não pede plano/documento próprio para: "
+                 + "; ".join(f"{c} {serv[c]['nome']}" for c in fora[:12])
+                 + ("…" if len(fora) > 12 else "") + ".",
+                 "Nada a fazer, a não ser que o órgão peça depois (entram no plano geral).")
+    if empresa_docs:
+        problema(INFO, "documentos_da_empresa", "Documentos que a empresa providencia",
+                 "O edital também pede: " + "; ".join(empresa_docs) + ". Não são gerados pelo "
+                 "app (licenças, autorizações, certidões).",
+                 "Separe esses documentos com o setor administrativo.")
 
 
 def _fim(A):
@@ -433,10 +553,26 @@ def bloqueado(A):
     return any(p["nivel"] == BLOQUEIA for p in A["problemas"])
 
 
+def preparar_planilha(A, progresso=None, cancelado=None, usar_claude=True, executar=None):
+    """Planilha da empresa montada com o edital (o Claude lê procedimentos, locais e
+    responsáveis nos trechos citados no perfil). Ver empresa.preencher_do_edital."""
+    pasta = A["pasta"]
+    cache = PA.arquivo(pasta, PASTA_TEXTOS, criar=True)
+    docs = []
+    for d in A.get("documentos") or []:
+        try:
+            docs.append(documentos.ler(d["caminho"], cache))
+        except Exception:
+            pass
+    return EMP.preencher_do_edital(pasta, A["perfil"], docs, usar_claude=usar_claude,
+                                   executar=executar,
+                                   progresso=(lambda t: progresso(t)) if progresso else None)
+
+
 def ler_escaneados(A, progresso=None, cancelado=None, executar=None):
     """OCR pelo Claude das páginas sem texto dos documentos escaneados da análise."""
     ocr = _mod("ocr")
-    cache = os.path.join(A["pasta"], PASTA_TEXTOS)
+    cache = PA.arquivo(A["pasta"], PASTA_TEXTOS, criar=True)
     res = []
     for c in A.get("escaneados") or []:
         if cancelado and cancelado():
@@ -451,7 +587,7 @@ def ler_escaneados(A, progresso=None, cancelado=None, executar=None):
 # ====================================================================== criar
 def criar(A, ids, pasta_saida, empresa="", validar=True, corrigir=True, frota=True,
           baixar=True, municipio=None, uf=None, progresso=None, cancelado=None,
-          baixar_fn=None):
+          baixar_fn=None, redigir=True, executar_redacao=None):
     """Cria os planos escolhidos. Um erro num plano não para os outros."""
     if bloqueado(A):
         raise ValueError("Há problema que impede criar os planos: "
@@ -467,7 +603,7 @@ def criar(A, ids, pasta_saida, empresa="", validar=True, corrigir=True, frota=Tr
     if (municipio, uf) != (p["contrato"].get("municipio"), p["contrato"].get("uf")) and \
             municipio and uf:
         p["contrato"]["municipio"], p["contrato"]["uf"] = municipio, uf
-        PF.salvar(p, os.path.join(pasta, ARQ_PERFIL))
+        PF.salvar(p, PA.arquivo(pasta, ARQ_PERFIL, criar=True))
     novos = []
 
     def aviso(nivel, codigo, titulo, detalhe, solucao, ids_=None):
@@ -480,8 +616,23 @@ def criar(A, ids, pasta_saida, empresa="", validar=True, corrigir=True, frota=Tr
             progresso(txt, i, n)
 
     # ------------------------------------------------------------ empresa
+    if not EMP.arquivo(pasta) and not A["slu"]:
+        # qualquer edital: a planilha sai do edital (frota, pessoal, procedimentos, locais)
+        prog("Montando a planilha da empresa com o edital…")
+        try:
+            preparar_planilha(A, progresso=prog,
+                              usar_claude=redigir and executar_redacao is None)
+        except Exception:
+            pass
     if not EMP.arquivo(pasta):
-        EMP.criar_modelo(pasta, p, [(x["servico"], x["lote"], x["sigla"]) for x in planos])
+        serv = {s["codigo"]: s for s in p.get("servicos") or []}
+        pares = []
+        for x in planos:
+            for c in x.get("servicos") or [x["servico"]]:
+                par = (c, x["lote"], x["sigla"] or sigla_auto(serv.get(c, {"codigo": c})))
+                if par not in pares:
+                    pares.append(par)
+        EMP.criar_modelo(pasta, p, pares)
     emp = EMP.ler(pasta)
     if not emp["contatos"] and not emp["procedimentos"]:
         aviso(ATENCAO, "planilha_empresa_vazia", "Planilha da empresa sem contatos e procedimentos",
@@ -522,12 +673,22 @@ def criar(A, ids, pasta_saida, empresa="", validar=True, corrigir=True, frota=Tr
         for c in A["historico"]:
             prog(f"Lendo o histórico de operação {os.path.basename(c)}…")
             try:
-                h = H.ler(c, cache=os.path.join(pasta, "historico_cache.json"))
+                h = H.ler(c, cache=PA.arquivo(pasta, "historico_cache.json", criar=True))
                 if h and h.get("circuitos"):
                     hist, hist_arq = h, c
                     break
             except Exception:
                 continue
+
+    # ------------------------------------------------------------ textos do edital (redação)
+    docs = []
+    if any(x.get("entregavel") is not None for x in planos):
+        cache = PA.arquivo(pasta, PASTA_TEXTOS, criar=True)
+        for d in A.get("documentos") or []:
+            try:
+                docs.append(documentos.ler(d["caminho"], cache))
+            except Exception:
+                pass
 
     # ------------------------------------------------------------ cada plano
     res = []
@@ -538,7 +699,10 @@ def criar(A, ids, pasta_saida, empresa="", validar=True, corrigir=True, frota=Tr
         r = {"id": pl["id"], "servico": pl["servico"], "nome": pl["nome"], "lote": pl["lote"],
              "origem": pl["origem"]}
         try:
-            if A["slu"]:
+            if pl.get("entregavel") is not None:
+                out = _criar_entregavel(A, pl, pasta_saida, empresa, emp, docs, redigir,
+                                        executar_redacao, validar, corrigir, prog, limite)
+            elif A["slu"]:
                 out = _criar_slu(A, pl, pasta_saida, empresa, emp, validar, corrigir,
                                  hist if frota else None, limite)
             else:
@@ -547,7 +711,8 @@ def criar(A, ids, pasta_saida, empresa="", validar=True, corrigir=True, frota=Tr
             if vias and pl["osm"]:
                 out.setdefault("arquivos", {})["base_vias_osm"] = vias["arquivo"]
             r.update(ok=True, **{k: out.get(k) for k in ("pasta", "arquivos", "validacao",
-                                                         "correcao", "frota", "aviso")},
+                                                         "correcao", "frota", "aviso",
+                                                         "a_definir", "redigido")},
                      pendentes=out.get("secoes_docx_a_preencher") or [])
         except Exception as e:
             r.update(ok=False, erro=f"{type(e).__name__}: {e}")
@@ -561,6 +726,20 @@ def criar(A, ids, pasta_saida, empresa="", validar=True, corrigir=True, frota=Tr
               "Abrir a planilha de conferência de cada plano e corrigir o que a correção "
               "automática não resolveu (geometria, circuito fora do lote, sobreposição…).",
               [r["id"] for r in com_erro])
+    sem_red = [r for r in res if r.get("ok") and r.get("redigido") is False]
+    if sem_red:
+        aviso(ATENCAO, "redacao_falhou", "O Claude não redigiu alguns textos",
+              f"{len(sem_red)} documento(s) saíram só com o que dá por regras (frota, pessoal). "
+              + (sem_red[0].get("aviso") or ""),
+              "Confira a conta Claude (Configurar IA) e crie de novo esses planos.",
+              [r["id"] for r in sem_red])
+    a_def = sum(r.get("a_definir") or 0 for r in res)
+    if a_def:
+        aviso(INFO, "a_definir", f"{a_def} ponto(s) [A DEFINIR] nos textos",
+              "São informações que o edital não traz (horários, garagem, responsáveis, "
+              "cronograma da contratante…). Estão em vermelho no .docx.",
+              "Complete na planilha da empresa (contatos, procedimentos) ou direto no .docx.",
+              [r["id"] for r in res if r.get("a_definir")])
     if vias:
         aviso(INFO, "vias_baixadas", "Vias do OpenStreetMap baixadas",
               f"{vias['vias']} trechos, {vias['km']} km, em {os.path.relpath(vias['arquivo'], pasta)}.",
@@ -571,7 +750,7 @@ def criar(A, ids, pasta_saida, empresa="", validar=True, corrigir=True, frota=Tr
               "Veja a planilha de frota em cada plano (pontos para levar ao órgão).",
               [r["id"] for r in res if r.get("frota")])
     A["problemas"] += novos
-    rel = relatorio(A, res, pasta_saida)
+    rel = relatorio(A, res, PA.relatorios(pasta, criar=True))
     return {"planos": res, "relatorio": rel, "empresa": emp.get("arquivo"),
             "ok": sum(1 for r in res if r.get("ok")),
             "falhas": sum(1 for r in res if not r.get("ok"))}
@@ -705,6 +884,159 @@ def _criar_generico(A, pl, pasta_saida, empresa, emp, validar, corrigir, hist):
     return out
 
 
+# ------------------------------------------------------------------ documento do edital
+def _criar_entregavel(A, pl, pasta_saida, empresa, emp, docs, redigir, executar, validar,
+                      corrigir, prog, limite):
+    """Os documentos que o edital pede para um conjunto de serviços (ex.: Plano de Trabalho
+    Operacional dos itens 1.1 a 1.5): texto .docx com as seções do edital (redigido pelo
+    Claude), mapa .gpkg (camadas do edital ou setores/rotas/pontos) e planilhas .xlsx."""
+    p = A["perfil"]
+    serv = {s["codigo"]: s for s in p.get("servicos") or []}
+    servs, lote = pl["servicos"], pl["lote"]
+    pasta_plano = os.path.join(pasta_saida, pl["pasta_nome"])
+    os.makedirs(pasta_plano, exist_ok=True)
+    arqs = {}
+    out = {"pasta": pasta_plano, "arquivos": arqs, "validacao": None, "correcao": None,
+           "frota": None, "secoes_docx_a_preencher": [], "redigido": None, "a_definir": 0}
+    nomes = dict(zip(pl["entregaveis"], pl["arquivos"]))
+
+    # mapa: camadas do edital para estes serviços, ou setores/rotas/pontos
+    plano, cams = None, []
+    if pl.get("mapa_arquivo"):
+        plano = os.path.join(pasta_plano, pl["mapa_arquivo"])
+        if os.path.splitext(plano)[1].lower() not in (".gpkg", ".gdb"):
+            plano = os.path.splitext(plano)[0] + ".gpkg"
+        cams = estrutura.camadas_exigidas(p, servs)
+        if not os.path.exists(plano):
+            base = pl.get("plano_existente")
+            if base and os.path.splitext(base)[1].lower() == os.path.splitext(plano)[1].lower():
+                (shutil.copytree if os.path.isdir(base) else shutil.copy2)(base, plano)
+            elif cams:
+                importacao.criar_plano(p, plano, servs)
+            else:
+                _gpkg_generico(plano, _epsg_area(p, limite))
+        if cams and corrigir:
+            rel = estrutura.completar_plano(p, plano, servs, backup=False)
+            out["correcao"] = {"camadas_criadas": rel["camadas_criadas"],
+                               "preenchidos": rel["preenchidos"]}
+        if cams and validar:
+            v = V.validar(p, plano, servs)
+            rv = os.path.join(pasta_plano, os.path.splitext(os.path.basename(plano))[0]
+                              + "_conferencia.xlsx")
+            V.relatorio_xlsx(v, rv)
+            arqs["xlsx_conferencia"] = rv
+            out["validacao"] = {"erros": v["resumo"]["erros"], "avisos": v["resumo"]["avisos"]}
+        arqs["mapa"] = plano
+
+    veic = []
+    for c in servs:
+        veic += EMP.veiculos_do_edital(p, c, lote, sigla_auto(serv[c]))
+    pend, a_def = [], 0
+    for k in pl["entregaveis"]:
+        e = p["entregaveis"][k]
+        tipo = pl["tipos"][k]
+        destino = os.path.join(pasta_plano, nomes[k])
+        if tipo == "mapa":
+            continue
+        if tipo == "planilha":
+            destino = os.path.splitext(destino)[0] + ".xlsx"
+            if plano and cams:
+                _tabela_atributos(plano, destino)          # tabela das camadas do plano
+            else:
+                _planilha_entregavel(destino, e, [serv[c] for c in servs])
+            arqs[f"xlsx:{e['nome']}"] = destino
+            continue
+        # texto: seções do edital; o Claude redige a partir das páginas do edital
+        secoes = e.get("secoes") or SECOES_PADRAO
+        txt = {}
+        for c in servs:                    # base por regras (frota, pessoal, horários…)
+            for t, v in EMP.textos(p, c, lote, sigla_auto(serv[c]), pl["turnos"], emp,
+                                   secoes).items():
+                bloco = f"{c} {serv[c]['nome']}:\n{v}" if len(servs) > 1 else v
+                txt[t] = (txt[t] + "\n\n" + bloco) if t in txt else bloco
+        if redigir:
+            prog(f"Claude redigindo \"{e['nome'][:60]}\" (lote {lote})…")
+            try:
+                red = _mod("redacao").redigir(
+                    p, e, servs, lote, docs, emp, secoes,
+                    veiculos=[{x: v[x] for x in ("identificacao", "tipo", "turno")}
+                              for v in veic],
+                    nome_empresa=empresa, executar=executar)
+                txt.update(red)
+                out["redigido"] = True
+            except Exception as ex:
+                out["redigido"] = False
+                out["aviso"] = (f"O Claude não redigiu o texto ({ex}); saiu só o que dá por "
+                                "regras.")
+        destino = os.path.splitext(destino)[0] + ".docx"
+        sub = f"Lote {lote}" + (f" — {empresa}" if empresa else "")
+        itens = "Serviços: " + "; ".join(f"{c} {serv[c]['nome']}" for c in servs) + "."
+        _docx(destino, p, pl, empresa, secoes, txt, e.get("como_fazer") or "", plano,
+              titulo=e["nome"], subtitulo=sub, abertura=itens)
+        arqs[f"docx:{e['nome']}"] = destino
+        pend += [t for t in secoes if not str(txt.get(t) or "").strip()]
+        a_def += sum(str(v).count("[A DEFINIR") for v in txt.values())
+    out["secoes_docx_a_preencher"] = pend
+    out["a_definir"] = a_def
+    return out
+
+
+def _epsg_area(p, limite):
+    e = PF.epsg(p)
+    if e:
+        return e
+    if limite:
+        try:
+            g = BD.geometria_limite(limite)
+            c = g.Centroid()
+            return BD.utm_sirgas(c.GetX(), c.GetY())
+        except Exception:
+            pass
+    return 31983
+
+
+def _gpkg_generico(caminho, epsg):
+    """Mapa do plano quando o edital não define camadas: setores, rotas e pontos."""
+    from osgeo import ogr, osr
+    srs = osr.SpatialReference()
+    srs.ImportFromEPSG(int(epsg))
+    ds = ogr.GetDriverByName("GPKG").CreateDataSource(caminho)
+    tipos = {"MultiPolygon": ogr.wkbMultiPolygon, "MultiLineString": ogr.wkbMultiLineString,
+             "Point": ogr.wkbPoint}
+    for nome, geom, campos in CAMADAS_GENERICAS:
+        lyr = ds.CreateLayer(nome, srs, tipos[geom])
+        for c in campos:
+            lyr.CreateField(ogr.FieldDefn(c, ogr.OFTInteger if c == "ordem" else ogr.OFTString))
+    ds = None
+
+
+def _planilha_entregavel(destino, e, servicos):
+    from openpyxl import Workbook
+    from openpyxl.styles import Alignment, Font, PatternFill
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Relação"
+    cols = ["Item", "Serviço", "Endereço", "Bairro", "Latitude", "Longitude", "Foto (arquivo)",
+            "Data", "Situação", "Observação"]
+    ws.append(cols)
+    for c in ws[1]:
+        c.font = Font(bold=True, color="FFFFFF")
+        c.fill = PatternFill("solid", fgColor="1F4E78")
+    for col, w in zip("ABCDEFGHIJ", (8, 30, 40, 20, 12, 12, 22, 12, 14, 40)):
+        ws.column_dimensions[col].width = w
+    info = wb.create_sheet("Como o edital pede")
+    for linha in (("Documento", e.get("nome")), ("Formato", e.get("formato")),
+                  ("Descrição", e.get("descricao")), ("Como fazer", e.get("como_fazer")),
+                  ("Serviços", "; ".join(f"{s['codigo']} {s['nome']}" for s in servicos)),
+                  ("Fonte", PF.fonte_txt(e))):
+        info.append(list(linha))
+    info.column_dimensions["A"].width = 14
+    info.column_dimensions["B"].width = 110
+    for row in info.iter_rows():
+        row[1].alignment = Alignment(wrap_text=True, vertical="top")
+    wb.save(destino)
+
+
 def _exportar_shp(plano, pasta):
     from osgeo import gdal
     os.makedirs(pasta, exist_ok=True)
@@ -736,23 +1068,35 @@ def _tabela_atributos(plano, destino):
     wb.save(destino)
 
 
-def _docx(destino, p, pl, empresa, secoes, txt, como_fazer, plano):
+def _docx(destino, p, pl, empresa, secoes, txt, como_fazer, plano, titulo=None,
+          subtitulo=None, abertura=None):
     try:
         from .actions import slu
     except ImportError:
         import slu
     c = p["contrato"]
-    corpo = [slu._p(f"Plano de Serviço — {pl['servico']} - {pl['nome']}", "Title"),
-             slu._p(f"Lote {pl['lote']}" + (f" — {empresa}" if empresa else ""), "Subtitle"),
+    corpo = [slu._p(titulo or f"Plano de Serviço — {pl['servico']} - {pl['nome']}", "Title"),
+             slu._p(subtitulo or (f"Lote {pl['lote']}" + (f" — {empresa}" if empresa else "")),
+                    "Subtitle"),
              slu._p(f"Elaborado conforme {c.get('titulo') or 'o edital'}"
                     + (f" ({c['orgao']})" if c.get("orgao") else "") + ".")]
+    if abertura:
+        corpo.append(slu._p(abertura))
     if como_fazer:
         corpo.append(slu._p(f"Como o edital pede: {como_fazer}", italico=True, cor="7F7F7F"))
+    if plano:
+        corpo.append(slu._p(f"Mapa do plano: {os.path.basename(plano)} (setores, rotas e pontos).",
+                            italico=True, cor="7F7F7F"))
     for n, t in enumerate(secoes, start=1):
         corpo.append(slu._p(f"{n}. {t}", "Heading1"))
         if txt.get(t):
             for par in str(txt[t]).split("\n"):
-                corpo.append(slu._p(par))
+                if not par.strip():
+                    continue
+                if "[A DEFINIR" in par:
+                    corpo.append(slu._p(par, cor="C00000"))
+                else:
+                    corpo.append(slu._p(par))
         else:
             corpo.append(slu._p("[Preencher]", italico=True, cor="7F7F7F"))
     slu._escreve_docx(destino, "".join(corpo))
@@ -760,7 +1104,8 @@ def _docx(destino, p, pl, empresa, secoes, txt, como_fazer, plano):
 
 # ====================================================================== relatório
 def relatorio(A, res, pasta_saida):
-    """Planilha com o que foi criado e os problemas (para levar à reunião)."""
+    """Planilha com o que foi criado e os problemas (para levar à reunião), em
+    App_Qgis\\Relatorios."""
     from openpyxl import Workbook
     from openpyxl.styles import Alignment, Font, PatternFill
     os.makedirs(pasta_saida, exist_ok=True)

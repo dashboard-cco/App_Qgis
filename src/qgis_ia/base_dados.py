@@ -4,7 +4,7 @@
 - limite do município (IBGE, API de malhas — oficial e atualizada);
 - vias (OpenStreetMap, pela Overpass API), recortadas no limite do município.
 
-Ficam em <pasta>/Base/ e só são baixados uma vez. Sem QGIS (osgeo + urllib).
+Ficam em <pasta>/App_Qgis/Base/ e só são baixados uma vez. Sem QGIS (osgeo + urllib).
 """
 import json
 import math
@@ -16,7 +16,11 @@ import urllib.request
 
 from osgeo import gdal, ogr, osr
 
-PASTA_BASE = "Base"
+try:
+    from . import pastas as PA
+except ImportError:  # testes
+    import pastas as PA
+
 UA = {"User-Agent": "QGIS_IA-plugin/2 (planos de servico)"}
 IBGE_MUNICIPIOS = "https://servicodados.ibge.gov.br/api/v1/localidades/estados/{uf}/municipios"
 IBGE_MALHA = ("https://servicodados.ibge.gov.br/api/v3/malhas/municipios/{id}"
@@ -77,7 +81,7 @@ def municipio_ibge(nome, uf, baixar=_baixar):
 def limite_municipio(pasta, nome, uf, baixar=_baixar):
     """Baixa o limite do município (GeoJSON do IBGE) e grava em Base/limite_<mun>.gpkg."""
     m = municipio_ibge(nome, uf, baixar)
-    destino = os.path.join(pasta, PASTA_BASE, f"limite_{_arq(m['nome'])}_{uf.upper()}.gpkg")
+    destino = os.path.join(PA.base(pasta, criar=True), f"limite_{_arq(m['nome'])}_{uf.upper()}.gpkg")
     if os.path.exists(destino):
         return destino
     gj = baixar(IBGE_MALHA.format(id=m["id"]))
@@ -146,7 +150,7 @@ def vias_osm(pasta, limite, epsg=None, nome="vias_osm", baixar=_baixar, progress
     """Baixa do OpenStreetMap as vias dentro do limite (arquivo de polígono) e grava em
     Base/<nome>.gpkg, camada 'vias_osm', no EPSG pedido (padrão: UTM SIRGAS da região).
     Devolve {"arquivo", "vias", "km"}."""
-    destino = os.path.join(pasta, PASTA_BASE, f"{nome}.gpkg")
+    destino = os.path.join(PA.base(pasta, criar=True), f"{nome}.gpkg")
     if os.path.exists(destino):
         ds = ogr.Open(destino)
         lyr = ds.GetLayer(0)
