@@ -1,6 +1,6 @@
 [general]
-name=QGIS_IA
-description=Assistente de IA no QGIS: chat no painel e servidor MCP para Claude Desktop / Claude Code operarem o projeto.
+name=App_Qgis
+description=App_Qgis — planos de serviço de coleta e varrição a partir do edital (janela própria), mais assistente de IA: chat no painel e servidor MCP para Claude Desktop / Claude Code operarem o projeto.
 about=QGIS_IA integra IA ao QGIS de duas formas. (1) Painel de chat: descreva a tarefa em linguagem natural e o plugin executa ações predefinidas (camadas, geoprocessamento, layout, expressões). (2) Servidor MCP: expõe o QGIS por Model Context Protocol para o Claude Desktop, Claude Code ou outro cliente MCP operarem o projeto aberto. O servidor escuta apenas em 127.0.0.1, exige token e tem modo somente leitura.
 version=2.5.0
 changelog=2.5.0: slu_redesenhar_coleta com ajustar_frota — junta circuitos para caber na frota do Anexo R; planilha de soltura com a frota do edital (frota='edital'). 2.4.0: slu_planilha_soltura — planilha de soltura com frota dimensionada (VA01, VA02...).2.3.0: slu_redesenhar_coleta — redesenha o plano de coleta atual sobre a rede viária no padrão do Anexo G e com os lotes do novo edital; RAs 34 (Arapoanga) e 35 (Água Quente).2.2.0: duplicar_camada_com_ra — copia a camada e cria a coluna RA (preenchida por localização ou pelo codigo_ra). 2.1.0: Planos de Serviço SLU-DF (Anexo G do Edital 90005/2026) — cria .gdb no padrão, valida, preenche atributos, gera .xlsx (atributos e programação trimestral), .docx e shapefile.

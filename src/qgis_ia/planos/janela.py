@@ -10,7 +10,7 @@ from qgis.core import (QgsApplication, QgsProject, QgsProviderRegistry, QgsSetti
                        QgsVectorLayer, QgsWkbTypes, QgsFeatureRequest)
 from qgis.PyQt.QtCore import (QObject, QProcess, QProcessEnvironment, Qt, QTimer, QUrl,
                               pyqtSignal)
-from qgis.PyQt.QtGui import QDesktopServices, QFont
+from qgis.PyQt.QtGui import QBrush, QColor, QDesktopServices, QFont
 from qgis.PyQt.QtWidgets import (QComboBox, QDialog, QFileDialog, QHBoxLayout, QHeaderView,
                                  QLabel, QLineEdit, QListWidget, QListWidgetItem, QMessageBox,
                                  QPushButton, QTabWidget, QTreeWidget, QTreeWidgetItem,
@@ -29,6 +29,7 @@ ICONE = {checklist.OK: "🟢", checklist.PARCIAL: "🟡", checklist.FALTA: "🔴
 ROTULO = {checklist.OK: "tem", checklist.PARCIAL: "incompleto", checklist.FALTA: "falta",
           checklist.CONFIRMAR: "confirmar", checklist.INFO: ""}
 
+_CHAVE_ACAO = Qt.ItemDataRole.UserRole + 1     # chave do item em "O que fazer" (editável)
 _CHECK = Qt.ItemFlag.ItemIsUserCheckable
 _MARCADO, _DESMARCADO = Qt.CheckState.Checked, Qt.CheckState.Unchecked
 
@@ -297,6 +298,12 @@ class JanelaPlanos(QDialog):
             b = QPushButton(txt)
             b.clicked.connect(fn)
             bts.addWidget(b)
+        self.bt_ocr = QPushButton("🔎 Ler escaneados (OCR)")
+        self.bt_ocr.setToolTip("Páginas sem texto viram imagem e o Claude transcreve "
+                               "(≈ 10 s por página; usa a sua assinatura)")
+        self.bt_ocr.clicked.connect(self._ler_escaneados)
+        self.bt_ocr.setVisible(False)
+        bts.addWidget(self.bt_ocr)
         bts.addStretch()
         self.cb_pronto = QComboBox()
         self.cb_pronto.addItem("Usar perfil pronto…")
@@ -344,7 +351,11 @@ class JanelaPlanos(QDialog):
         self.lb_placar.setWordWrap(True)
         lay.addWidget(self.lb_placar)
         self.arv_chk = QTreeWidget()
-        self.arv_chk.setHeaderLabels(["Item", "Situação", "O que fazer", "Fonte"])
+        self.arv_chk.setHeaderLabels(["Item", "Situação", "O que fazer ✏", "Fonte"])
+        self.arv_chk.headerItem().setToolTip(
+            2, "Clique duplo para escrever o que fazer nos itens que faltam")
+        self.arv_chk.setEditTriggers(QTreeWidget.EditTrigger.NoEditTriggers)
+        self.arv_chk.itemDoubleClicked.connect(self._editar_o_que_fazer)
         self.arv_chk.setWordWrap(True)
         self.arv_chk.header().setSectionResizeMode(0, QHeaderView.ResizeMode.Interactive)
         self.arv_chk.setColumnWidth(0, 340)
@@ -427,6 +438,20 @@ class JanelaPlanos(QDialog):
         self.aba_validar.atualizar()
         self.aba_importar.info = None
 
+    def abrir_projeto(self, pasta, documentos):
+        """Vindo da janela inicial: usa a pasta do projeto e acrescenta os documentos dela."""
+        pasta = os.path.normpath(pasta)
+        if pasta != getattr(self, "pasta", None):
+            self._abrir_pasta(pasta)
+        novos = [os.path.normpath(c) for c in documentos
+                 if os.path.normpath(c) not in self.estado["documentos"]]
+        if novos:
+            self.estado["documentos"] += novos
+            self._salvar_estado()
+            self._mostrar_docs()
+            self._ler_docs_em_segundo_plano()
+        self.abas.setCurrentIndex(0 if not self.perfil else 1)
+
     def _salvar_estado(self):
         os.makedirs(self.pasta, exist_ok=True)
         with open(os.path.join(self.pasta, ARQ_ESTADO), "w", encoding="utf-8") as f:
@@ -470,6 +495,8 @@ class JanelaPlanos(QDialog):
             it.setData(Qt.ItemDataRole.UserRole, c)
             it.setToolTip(c)
             self.lista_docs.addItem(it)
+        self.bt_ocr.setVisible(any(documentos.aviso_sem_texto(d) for d in self.docs_lidos.values()
+                                   if d.get("caminho", "").lower().endswith(".pdf")))
         if self.estado["documentos"] and len(self.docs_lidos) == len(self.estado["documentos"]):
             _, custo = extracao.estimativa(list(self.docs_lidos.values()))
             self._status(f"{len(self.docs_lidos)} documento(s), ~{total // 1000} mil tokens. "
@@ -539,6 +566,49 @@ class JanelaPlanos(QDialog):
                 depois()
 
         self._rodar(QgsTask.fromFunction("Lendo documentos do contrato", trabalho, on_finished=fim))
+
+    def _ler_escaneados(self):
+        """OCR pelo Claude das páginas sem texto dos PDFs escaneados."""
+        from . import ocr
+        alvo = [c for c, d in self.docs_lidos.items()
+                if c.lower().endswith(".pdf") and documentos.aviso_sem_texto(d)]
+        if not alvo:
+            return
+        n = sum(len(ocr.paginas_sem_texto(self.docs_lidos[c])) for c in alvo)
+        if QMessageBox.question(
+                self, "Ler escaneados",
+                f"O Claude vai ler {n} página(s) sem texto de {len(alvo)} documento(s) como "
+                f"imagem (≈ {max(1, n * 10 // 60)} min; usa a sua assinatura).\n\nContinuar?") \
+                != QMessageBox.StandardButton.Yes:
+            return
+        cache = os.path.join(self.pasta, PASTA_TEXTOS)
+        sinal = self._sinal
+
+        def trabalho(task):
+            res = []
+            for c in alvo:
+                if task.isCanceled():
+                    break
+                r = ocr.ocr_documento(c, cache, progresso=sinal.msg.emit,
+                                      cancelado=task.isCanceled)
+                res.append((c, r))
+            return res
+
+        def fim(exc, res=None):
+            self._ocupado(False)
+            if exc or res is None:
+                QMessageBox.warning(self, "Ler escaneados", f"Não deu certo: {exc}")
+                return
+            lidas = faltaram = 0
+            for c, r in res:
+                self.docs_lidos[c] = r["doc"]
+                lidas += r["paginas_lidas"]
+                faltaram += len(r["faltaram"])
+            self._mostrar_docs()
+            self._status(f"Claude leu {lidas} página(s) escaneada(s)"
+                         + (f"; {faltaram} falharam (tente de novo)." if faltaram else "."))
+
+        self._rodar(QgsTask.fromFunction("Lendo páginas escaneadas", trabalho, on_finished=fim))
 
     def _ler_com_ia(self):
         if not self.estado["documentos"]:
@@ -889,6 +959,17 @@ class JanelaPlanos(QDialog):
             for col in range(4):
                 it.setToolTip(col, it.text(col))
             chave = i["chave"]
+            if i["status"] in (checklist.FALTA, checklist.PARCIAL, checklist.CONFIRMAR) or \
+                    i.get("acao_usuario"):
+                it.setData(2, _CHAVE_ACAO, chave)
+                it.setFlags(it.flags() | Qt.ItemFlag.ItemIsEditable)
+                if i.get("acao_usuario"):
+                    it.setForeground(2, QBrush(QColor("#1a5fb4")))
+                    it.setToolTip(2, f"Escrito por você: {i['acao']}\n\nOrientação do app: "
+                                     f"{i.get('acao_padrao') or '—'}\n\n(clique duplo para mudar; "
+                                     "apague o texto para voltar à orientação do app)")
+                else:
+                    it.setToolTip(2, f"{i['acao']}\n\n(clique duplo para escrever o que fazer)")
             pode_marcar = (chave.startswith("insumo|") or chave.startswith("pendencia|")) and \
                 i["status"] in (checklist.CONFIRMAR, checklist.FALTA) or \
                 chave in self.estado.get("manuais", {})
@@ -906,7 +987,24 @@ class JanelaPlanos(QDialog):
             f" · ⚪ {n['confirmar']} a confirmar")
         a.blockSignals(False)
 
+    def _editar_o_que_fazer(self, it, col):
+        if col == 2 and it.data(2, _CHAVE_ACAO):
+            self.arv_chk.editItem(it, 2)
+
     def _manual_marcado(self, it, col):
+        if col == 2:
+            chave = it.data(2, _CHAVE_ACAO)
+            if not chave:
+                return
+            txt = it.text(2).strip()
+            escritos = self.estado.setdefault("o_que_fazer", {})
+            if txt:
+                escritos[chave] = txt
+            else:
+                escritos.pop(chave, None)
+            self._salvar_estado()
+            QTimer.singleShot(0, self._atualizar_checklist)
+            return
         chave = it.data(0, Qt.ItemDataRole.UserRole)
         if not chave:
             return

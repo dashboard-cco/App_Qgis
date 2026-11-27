@@ -7,6 +7,55 @@ Anexo G do Edital do Pregão Presencial nº 90005/2026 (pasta `Edital/`): File G
 (.gdb), tabelas (.xlsx), texto (.docx) e shapefile. Detalhes em
 [src/qgis_ia/README.md](src/qgis_ia/README.md).
 
+## Janela inicial: tipos de projeto
+
+O ícone **QGIS_IA** abre uma janela com quatro tipos de projeto: **Coleta Convencional** (P1),
+**Coleta Seletiva** (P2), **Varrição Manual** (P5) e **Varrição Mecanizada** (P6).
+
+1. Clique no tipo e escolha a **pasta com os arquivos** (edital, plano atual .gdb, planilhas…).
+   O app lê a pasta e mostra o que achou: documentos, planos e camadas (serviço, lote,
+   circuitos, turnos e km de vias de cada .gdb) e planilhas.
+2. **Detalhes** já vêm sugeridos pelo que foi lido: lote, turnos, plano de partida (o plano
+   atual da pasta ou um novo vazio no padrão do edital), empresa, pasta de saída e o texto do
+   plano por seção (o que é o serviço, material, horários dos turnos, caminhões do Anexo R,
+   resumo dos circuitos). Confira e complete.
+3. **Criar plano** gera o plano de serviço do edital (.gdb, tabela .xlsx e texto .docx) e
+   confere o .gdb com as regras do Anexo G (planilha de conferência). *Ler o edital com IA /
+   frota e equipe* abre os Planos do Contrato já com a pasta e os documentos do projeto.
+
+**Criar Todos** (botão da janela inicial) serve para **qualquer licitação**. Escolha a pasta
+do contrato, mesmo que tenha só o edital.
+
+- **Perfil do contrato.** Tudo sai do perfil (`contrato.json`), que o Claude monta lendo o
+  edital (botão *Ler o edital com o Claude*). Ele traz os serviços, lotes, camadas, frota,
+  pessoal, turnos, município/UF e, para cada arquivo exigido, o **padrão do nome**
+  (ex.: `{sigla}{lote}.gdb`), o formato, as **seções** do texto e **como fazer**. O edital do
+  SLU-DF (Pregão 90005/2026) já tem perfil pronto, e para ele o app usa o gerador do Anexo G.
+- **Planos que o contrato pede.** Um por serviço e lote, com os arquivos que o edital exige.
+  Cada um mostra de onde vem: plano atual da pasta (copiado; o original não muda), **vias do
+  OpenStreetMap** quando não há plano (o limite do município vem do IBGE, e tudo fica em
+  `Base/`), ou só documentos.
+- **Problemas**, cada um com a solução sugerida. Lotes e planos podem ser marcados ou
+  desmarcados, e a escolha fica guardada na pasta (`criar_todos.json`).
+- **Etapas de *Criar*:**
+  - adequação de **frota e jornada**, quando a pasta tem o histórico de operação
+    (ex.: `TabelaPadrão.xlsx`);
+  - **correção automática**: no SLU, preenche os campos calculáveis e divide as linhas acima
+    de 130/200 m; em outro edital, cria as camadas e campos que faltam e põe os valores
+    padrão;
+  - **conferência** com as regras do edital;
+  - tabela `.xlsx`;
+  - texto `.docx` com as seções do edital.
+- **Texto do plano.** A frota e o pessoal vêm do edital. Sem placa, os veículos são
+  identificados por **código** (`CC01-D01` = serviço + lote, turno D/N e número). Empresa,
+  contatos e procedimentos vêm da **`planilha_modelo_empresa.xlsx`** da pasta; se ela não
+  existir, o app cria um modelo já preenchido com a frota e o pessoal do edital.
+- **Resultado:** a planilha `Criar_Todos_<data>.xlsx`, com as abas Planos e Problemas.
+
+Os detalhes ficam salvos na pasta (`qgis_ia_projeto.json`) e o projeto aparece em
+*Projetos recentes*. O assistente por mensagens (chat) e os Planos do Contrato continuam no
+menu *QGIS_IA* e nos botões da janela inicial.
+
 ## Planos do Contrato (em desenvolvimento)
 
 Janela própria no QGIS (menu *QGIS_IA → Planos do Contrato*) para criar o plano que o
@@ -114,4 +163,5 @@ No QGIS: *Complementos → Gerenciar e instalar complementos → Instalar a part
 "C:\Program Files\QGIS 3.44.15\bin\python-qgis-ltr.bat" tests\test_planos_fase2.py
 "C:\Program Files\QGIS 3.44.15\bin\python-qgis-ltr.bat" tests\test_planos_frota.py
 "C:\Program Files\QGIS 3.44.15\bin\python-qgis-ltr.bat" tests\test_planos_importacao.py
+"C:\Program Files\QGIS 3.44.15\bin\python-qgis-ltr.bat" tests\test_projetos.py
 ```

@@ -955,6 +955,62 @@ def slu_preencher_atributos(gdb_path, servico=None, lote=None, sobrescrever=Fals
             "dica": "Rode slu_validar_gdb em seguida para ver o que ainda falta."}
 
 
+def slu_dividir_linhas(gdb_path, servico=None, lote=None, backup=True):
+    """Divide as linhas do circuito planejado acima do máximo do Anexo G (coleta 130 m,
+    varrição 200 m) em partes iguais e separa linhas com várias partes (Must Be Single
+    Part). Os atributos são copiados para cada parte."""
+    import math
+    from shapely import wkb as _wkb
+    from shapely.ops import substring
+    servico, lote = _servico_lote_de_gdb(gdb_path, servico, lote)
+    grupo = E.SERVICOS[servico]["grupo"]
+    lmax = 130 if grupo == "coleta" else 200
+    copia = None
+    if backup:
+        stamp = _dt.datetime.now().strftime("%Y%m%d_%H%M%S")
+        copia = os.path.normpath(gdb_path)[:-4] + f"_backup_{stamp}.gdb"
+        shutil.copytree(gdb_path, copia)
+    divididas = partes_novas = 0
+    with _exc():
+        gdb = _Gdb(gdb_path, update=True)
+        lyr = gdb.layer("st_circuito_planejado")
+        if lyr is None:
+            return {"success": True, "divididas": 0, "partes_novas": 0, "backup": copia}
+        tipo = lyr.GetGeomType()
+        lyr.ResetReading()
+        trocar = []
+        for f in lyr:
+            g = f.GetGeometryRef()
+            if g is None or g.IsEmpty():
+                continue
+            lin = g.GetLinearGeometry() if g.HasCurveGeometry() else g   # curvas do ArcGIS
+            s = _wkb.loads(bytes(lin.ExportToIsoWkb()))
+            if s.has_z:
+                from shapely import force_2d
+                s = force_2d(s)
+            linhas = list(getattr(s, "geoms", [s]))
+            pedacos = []
+            for ln in linhas:
+                n = max(1, math.ceil(ln.length / lmax - 1e-9))
+                pedacos += [substring(ln, ln.length * i / n, ln.length * (i + 1) / n)
+                            for i in range(n)] if n > 1 else [ln]
+            if len(pedacos) > 1:
+                trocar.append((f.GetFID(), pedacos))
+        for fid, pedacos in trocar:
+            orig = lyr.GetFeature(fid)
+            for pd in pedacos:
+                nf = ogr.Feature(lyr.GetLayerDefn())
+                nf.SetFrom(orig)
+                nf.SetGeometry(ogr.ForceTo(ogr.CreateGeometryFromWkb(pd.wkb), tipo))
+                lyr.CreateFeature(nf)
+                partes_novas += 1
+            lyr.DeleteFeature(fid)
+            divididas += 1
+        gdb = None
+    return {"success": True, "divididas": divididas, "partes_novas": partes_novas,
+            "maximo_m": lmax, "backup": copia}
+
+
 def _forca(f, campos, nome, valor):
     real = campos.get(nome.lower())
     if real is None:

@@ -36,7 +36,11 @@ termo de referência, use planos_buscar (ex.: "plano de servi", "plano de trabal
 5. Grave cada seção com planos_salvar_secao assim que tiver os dados: contrato, documentos, lotes, \
 servicos, camadas, entregaveis, insumos, regras, recursos (frota e mão de obra por serviço, lote e \
 turno), equipes (equipe padrão de cada veículo), turnos (horário de cada turno e jornada por \
-serviço; horário que vale só para um equipamento vai com o código dele), pendencias. Se voltar com erros, corrija e grave \
+serviço; horário que vale só para um equipamento vai com o código dele), pendencias. \
+No contrato, informe municipio e uf. Em cada entregável, diga o padrão do nome do arquivo \
+(nome_arquivo, ex.: '{sigla}{lote}.gdb'), as seções exigidas no texto (secoes) e como o edital \
+pede que seja feito (como_fazer: formato, fonte, escala, conteúdo). Faça um entregável por arquivo \
+exigido em cada plano. Se voltar com erros, corrija e grave \
 de novo. Camadas com muitos campos podem ser gravadas em partes com acrescentar=true. Em cada campo, valor_padrao é o valor para registros sem informação quando o documento o indica (ex.: ciclo/semana = 0 para coleta semanal); senão, deixe vazio.
 6. No fim, responda em até 3 frases o que montou e as principais pendências."""
 

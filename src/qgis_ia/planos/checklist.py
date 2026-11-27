@@ -40,6 +40,29 @@ def filtra_servicos(itens, servicos):
     return [i for i in itens if not i.get("servicos") or sel & set(i["servicos"])]
 
 
+def so_escolhidos(codigos, servicos):
+    """Dos serviços de um item, só os escolhidos (o item de P1 e P2 aparece como P2 quando
+    o projeto é P2)."""
+    if not servicos:
+        return list(codigos or [])
+    sel = set(servicos)
+    return [c for c in codigos or [] if c in sel]
+
+
+def _nomes_servicos(p, codigos):
+    nomes = {s["codigo"]: s.get("nome", "") for s in p.get("servicos", [])}
+    return ", ".join(f"{c} {nomes[c]}".strip() if nomes.get(c) else c for c in codigos)
+
+
+def _exemplo_gdb(p, servicos, texto):
+    """Troca o exemplo de nome do .gdb (ex.: CC01.gdb) pelo do serviço escolhido."""
+    siglas = {s["codigo"]: s.get("sigla") for s in p.get("servicos", [])}
+    ex = [f"{siglas[c]}01.gdb" for c in servicos if siglas.get(c)]
+    if not ex:
+        return texto
+    return re.sub(r"\(ex\.: [A-Z]{2}\d{2}\.gdb\)", f"(ex.: {', '.join(ex[:3])})", texto)
+
+
 def acha_camada(nome, camadas_projeto):
     n = norm(nome)
     for c in camadas_projeto:
@@ -102,17 +125,20 @@ def gerar(p, camadas_projeto, estado=None, contar=None):
     g = GRUPOS[1]
     vistos = set()
     for cam in filtra_servicos(p.get("camadas", []), servicos):
-        rot = cam["nome"] + (f" ({', '.join(cam['servicos'])})" if cam.get("servicos") else "")
+        meus = so_escolhidos(cam.get("servicos"), servicos)
+        rot = cam["nome"] + (f" ({', '.join(meus)})" if meus else "")
         chave = f"camada|{cam['nome']}|{','.join(cam.get('servicos', []))}"
         if chave in vistos:
             continue
         vistos.add(chave)
         fonte = fonte_txt(cam)
+        desc = cam.get("descricao", "")
+        if meus and desc.startswith("Camada do grupo"):
+            desc = f"Camada do plano de {_nomes_servicos(p, meus)}."
         c = acha_camada(cam["nome"], camadas_projeto)
         if not c:
             itens.append(_item(g, rot, FALTA,
-                               f"{cam['geometria']} com {len(cam['campos'])} campos. "
-                               + cam.get("descricao", ""),
+                               f"{cam['geometria']} com {len(cam['campos'])} campos. " + desc,
                                fonte, "Será criada ao gerar o plano (modelo vazio) ou carregue a sua.",
                                chave))
             continue
@@ -150,7 +176,7 @@ def gerar(p, camadas_projeto, estado=None, contar=None):
         if e.get("prazo"):
             det += f" · prazo: {e['prazo']}"
         if e.get("descricao"):
-            det += f" · {e['descricao']}"
+            det += f" · {_exemplo_gdb(p, so_escolhidos(e.get('servicos'), servicos), e['descricao']) if servicos else e['descricao']}"
         itens.append(_item(g, e["nome"], INFO, det, fonte_txt(e), "Gerado na etapa Gerar.",
                            f"entregavel|{e['nome']}"))
 
@@ -164,6 +190,14 @@ def gerar(p, camadas_projeto, estado=None, contar=None):
             itens.append(_item(g, pend, CONFIRMAR, "", "",
                                "Esclareça com o contratante e marque como resolvida.", chave))
 
+    # o que o usuário escreveu em "O que fazer" vale no lugar da orientação padrão
+    escritos = estado.get("o_que_fazer") or {}
+    for i in itens:
+        txt = (escritos.get(i["chave"]) or "").strip()
+        if txt:
+            i["acao_padrao"] = i["acao"]
+            i["acao"] = txt
+            i["acao_usuario"] = True
     itens.sort(key=lambda i: (GRUPOS.index(i["grupo"]), ORDEM[i["status"]]))
     return itens
 

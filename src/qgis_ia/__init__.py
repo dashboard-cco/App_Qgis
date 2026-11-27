@@ -13,6 +13,9 @@ from .ai_client import ClaudeClient
 from .mcp_socket import McpSocketServer
 
 
+MENU = "&App_Qgis"
+
+
 class QgisIaPlugin:
     def __init__(self, iface):
         self.iface = iface
@@ -28,16 +31,23 @@ class QgisIaPlugin:
             # Ícone padrão do QGIS se não houver customizado
             icon_path = ":images/themes/default/mIconConsole.svg"
 
+        # Janela inicial: Coleta Convencional, Coleta Seletiva, Varrição Manual e Mecanizada
+        self.janela_inicio = None
+        self.action_inicio = QAction(QIcon(icon_path), "App_Qgis", self.iface.mainWindow())
+        self.action_inicio.setToolTip("App_Qgis: planos de coleta e varrição")
+        self.action_inicio.triggered.connect(self.abrir_inicio)
+        self.iface.addPluginToMenu(MENU, self.action_inicio)
+        self.iface.addToolBarIcon(self.action_inicio)
+
+        # Assistente por mensagens (painel lateral): só pelo menu e pela janela inicial
         self.action = QAction(
-            QIcon(icon_path),
-            "QGIS_IA",
+            QIcon(":images/themes/default/mIconConsole.svg"),
+            "Assistente IA (chat)",
             self.iface.mainWindow()
         )
         self.action.setCheckable(True)
         self.action.triggered.connect(self.toggle_dockwidget)
-
-        self.iface.addPluginToMenu("&QGIS_IA", self.action)
-        self.iface.addToolBarIcon(self.action)
+        self.iface.addPluginToMenu(MENU, self.action)
 
         # App "Planos do Contrato" (janela própria)
         self.janela_planos = None
@@ -47,9 +57,8 @@ class QgisIaPlugin:
             self.iface.mainWindow()
         )
         self.action_planos.setToolTip("Planos do Contrato: edital → o que falta → plano")
-        self.action_planos.triggered.connect(self.abrir_planos)
-        self.iface.addPluginToMenu("&QGIS_IA", self.action_planos)
-        self.iface.addToolBarIcon(self.action_planos)
+        self.action_planos.triggered.connect(lambda: self.abrir_planos())
+        self.iface.addPluginToMenu(MENU, self.action_planos)
 
         # Primeiro uso numa máquina nova: configura a conta da IA
         from qgis.PyQt.QtCore import QTimer
@@ -61,10 +70,14 @@ class QgisIaPlugin:
 
     def unload(self):
         """Remove menu/toolbar ao desativar plugin."""
-        self.iface.removePluginMenu("&QGIS_IA", self.action)
-        self.iface.removeToolBarIcon(self.action)
-        self.iface.removePluginMenu("&QGIS_IA", self.action_planos)
-        self.iface.removeToolBarIcon(self.action_planos)
+        self.iface.removePluginMenu(MENU, self.action_inicio)
+        self.iface.removeToolBarIcon(self.action_inicio)
+        self.iface.removePluginMenu(MENU, self.action)
+        self.iface.removePluginMenu(MENU, self.action_planos)
+        if self.janela_inicio:
+            self.janela_inicio.close()
+            self.janela_inicio.deleteLater()
+            self.janela_inicio = None
         if self.janela_planos:
             self.janela_planos.desligar()
             self.janela_planos.close()
@@ -78,11 +91,28 @@ class QgisIaPlugin:
             self.dockwidget.close()
             self.dockwidget.deleteLater()
 
-    def abrir_planos(self):
+    def abrir_inicio(self):
+        from .inicio import JanelaInicio
+        if self.janela_inicio is None:
+            self.janela_inicio = JanelaInicio(self.iface, abrir_chat=self.show_dockwidget,
+                                              abrir_planos=self.abrir_planos)
+        self.janela_inicio.show()
+        self.janela_inicio.raise_()
+        self.janela_inicio.activateWindow()
+
+    def abrir_planos(self, pasta=None, documentos=None, ler=False):
+        """Planos do Contrato; vindo de um projeto, já abre a pasta e os documentos dele.
+        ler=True: o Claude já começa a ler o edital (Criar Todos sem perfil)."""
+        from qgis.PyQt.QtCore import QTimer
         from .planos.janela import JanelaPlanos
         if self.janela_planos is None:
             self.janela_planos = JanelaPlanos(self.iface, self.get_mcp_server)
+        if pasta:
+            self.janela_planos.abrir_projeto(pasta, documentos or [])
         self.janela_planos.show()
+        if ler:
+            self.janela_planos.abas.setCurrentIndex(0)
+            QTimer.singleShot(300, self.janela_planos._ler_com_ia)
         self.janela_planos.raise_()
         self.janela_planos.activateWindow()
 

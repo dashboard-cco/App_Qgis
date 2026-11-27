@@ -17,3 +17,13 @@ Shp/
 # Planilha de histórico de operação (dados) e pasta do repositório QgisIA (tem GitHub próprio)
 /TabelaPadrão.xlsx
 /QgisIA/
+
+# Dados do contrato e arquivos que o app cria na pasta (não versionados)
+/[Pp]lanilha_modelo_empresa*.xlsx
+/criar_todos.json
+/qgis_ia_projeto.json
+/historico_cache.json
+/textos/
+/Base/
+/Planos/
+.claude/settings.local.json

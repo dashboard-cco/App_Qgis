@@ -1,4 +1,20 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
-  <rect width="64" height="64" rx="8" fill="#1a1a2e"/>
-  <text x="32" y="42" font-family="Arial, sans-serif" font-size="28" font-weight="bold" fill="#00d4aa" text-anchor="middle">🤖</text>
+  <defs>
+    <linearGradient id="fundo" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1e9e5a"/>
+      <stop offset="1" stop-color="#0f6b3c"/>
+    </linearGradient>
+  </defs>
+  <rect width="64" height="64" rx="12" fill="url(#fundo)"/>
+  <!-- mapa dobrado -->
+  <path d="M10 18 L23 13 L41 19 L54 14 L54 47 L41 52 L23 46 L10 51 Z" fill="#ffffff"/>
+  <path d="M23 13 L23 46 M41 19 L41 52" stroke="#cfe8d9" stroke-width="2" fill="none"/>
+  <!-- rota do circuito -->
+  <path d="M15 43 C20 34, 27 40, 31 31 S42 27, 46 24" stroke="#f28c28" stroke-width="3.2"
+        stroke-linecap="round" stroke-dasharray="1 5.2" fill="none"/>
+  <circle cx="15" cy="43" r="3" fill="#1f4e78"/>
+  <!-- marcador -->
+  <path d="M46 9 C40.5 9 37 13 37 17.5 C37 24 46 32 46 32 C46 32 55 24 55 17.5 C55 13 51.5 9 46 9 Z"
+        fill="#f28c28" stroke="#ffffff" stroke-width="1.5"/>
+  <circle cx="46" cy="17.5" r="3.4" fill="#ffffff"/>
 </svg>

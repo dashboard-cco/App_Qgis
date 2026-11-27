@@ -188,6 +188,26 @@ it = [i for i in checklist.gerar(p_pend, [], {"manuais": {"pendencia|0": True}})
       if i["grupo"] == checklist.GRUPOS[3]]
 check(it[0]["status"] == checklist.OK, "pendência resolvida")
 
+# só o serviço escolhido (projeto CS01 = P2: camadas de P1 e P2 aparecem só como P2)
+p_slu = perfil.perfil_slu_df()
+so_p2 = checklist.gerar(p_slu, [], {"servicos": ["P2"]})
+cams = [i for i in so_p2 if i["grupo"] == checklist.GRUPOS[1]]
+check(cams and all(i["titulo"].endswith("(P2)") for i in cams),
+      f"camadas só com P2: {[i['titulo'] for i in cams]}")
+check(all("P1" not in i["titulo"] + i["detalhe"] for i in so_p2),
+      f"nada de P1: {[i['titulo'] + ' ' + i['detalhe'] for i in so_p2 if 'P1' in i['titulo'] + i['detalhe']]}")
+check(all("CC01" not in i["detalhe"] for i in so_p2) and
+      any("CS01.gdb" in i["detalhe"] for i in so_p2), "exemplo do .gdb do serviço escolhido")
+check(any("Coleta Seletiva" in i["detalhe"] for i in cams), "descrição com o serviço")
+
+# "O que fazer" escrito pelo usuário
+alvo = next(i for i in so_p2 if i["status"] == checklist.FALTA)
+meu = checklist.gerar(p_slu, [], {"servicos": ["P2"],
+                                  "o_que_fazer": {alvo["chave"]: "Pedir ao SLU a base de vias"}})
+x = next(i for i in meu if i["chave"] == alvo["chave"])
+check(x["acao"] == "Pedir ao SLU a base de vias" and x.get("acao_usuario")
+      and x["acao_padrao"] == alvo["acao"], "o que fazer do usuário")
+
 # ------------------------------------------------------------ conta da IA
 check(config_ia.mascarar("sk-ant-api03-abcdefghijklmnop") == "sk-ant-api…mnop", "mascarar")
 
@@ -302,6 +322,23 @@ if qgs:
         with open(os.path.join(tmp, "estado.json"), encoding="utf-8") as fh:
             check(json.load(fh)["manuais"].get("insumo|Veículos e placas") is True, "estado.json")
         check("Ainda falta" in jan.lb_placar.text() or "Pronto" in jan.lb_placar.text(), "placar")
+
+        # escreve "O que fazer" num item que falta (coluna 2)
+        g0 = jan.arv_chk.topLevelItem(0)
+        alvo = next(g0.child(k) for k in range(g0.childCount())
+                    if g0.child(k).data(2, J._CHAVE_ACAO))
+        chave_acao = alvo.data(2, J._CHAVE_ACAO)
+        check(bool(alvo.flags() & J.Qt.ItemFlag.ItemIsEditable), "o que fazer editável")
+        alvo.setText(2, "Pedir ao SLU")
+        check(jan.estado["o_que_fazer"].get(chave_acao) == "Pedir ao SLU", "o que fazer gravado")
+        jan._atualizar_checklist()
+        g0 = jan.arv_chk.topLevelItem(0)
+        novo = next(g0.child(k) for k in range(g0.childCount())
+                    if g0.child(k).data(2, J._CHAVE_ACAO) == chave_acao)
+        check(novo.text(2) == "Pedir ao SLU", "o que fazer aparece depois de atualizar")
+        novo.setText(2, "")
+        check(chave_acao not in jan.estado["o_que_fazer"], "apagar volta à orientação do app")
+        jan._atualizar_checklist()
 
         # ferramentas MCP planos_* (o que o Claude chama)
         from planos import ferramentas as F

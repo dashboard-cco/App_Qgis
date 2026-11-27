@@ -54,6 +54,10 @@ ESQUEMA = _obj({
                                "description": "sistema de coordenadas exigido, ex.: 'SIRGAS 2000 / UTM 23S (EPSG:31983)'; vazio se não houver"},
         "prazo_entrega_plano": {"type": "string",
                                 "description": "prazo para entregar o plano, ex.: '30 dias após a ordem de serviço'"},
+        "municipio": {"type": "string",
+                      "description": "município(s) atendido(s), separados por ';' (ex.: 'Brasília'); "
+                                     "serve para baixar limites (IBGE) e vias (OpenStreetMap)"},
+        "uf": {"type": "string", "description": "sigla do estado, ex.: 'DF'"},
     }),
     "documentos": _lista(_obj({
         "nome": _S,
@@ -102,6 +106,15 @@ ESQUEMA = _obj({
         "descricao": _S,
         "prazo": _S,
         "servicos": _LS,
+        "nome_arquivo": {"type": "string",
+                         "description": "padrão do nome do arquivo exigido, com {sigla}, {lote} "
+                                        "(2 dígitos), {codigo} ou {servico}, ex.: '{sigla}{lote}.gdb'; "
+                                        "vazio se o edital não diz"},
+        "secoes": _lista(_S, "títulos das seções/capítulos exigidos no texto (na ordem do edital); "
+                             "vazio se não for texto"),
+        "como_fazer": {"type": "string",
+                       "description": "instruções do edital de como o arquivo deve ser feito "
+                                      "(conteúdo, formatação, fonte, escala…), resumidas"},
         "fonte": _FONTE,
     })),
     "insumos": _lista(_obj({
@@ -216,6 +229,10 @@ def normaliza(p):
         for f in cam.get("campos") or []:
             f.setdefault("tamanho", 0)
             f.setdefault("valor_padrao", "")
+    for e in out.get("entregaveis") or []:
+        e.setdefault("nome_arquivo", "")
+        e.setdefault("secoes", [])
+        e.setdefault("como_fazer", "")
     return out
 
 
@@ -293,6 +310,8 @@ def perfil_slu_df():
         "objeto": "Coleta, varrição e serviços complementares de limpeza urbana em 3 lotes.",
         "sistema_referencia": f"SIRGAS 2000 / UTM 23S (EPSG:{E.EPSG})",
         "prazo_entrega_plano": "",
+        "municipio": "Brasília",
+        "uf": "DF",
     })
     p["documentos"] = [
         {"nome": edital, "tipo": "edital", "resumo": "Edital e Termo de Referência.",
@@ -349,16 +368,23 @@ def perfil_slu_df():
     p["entregaveis"] = [
         {"nome": "Plano em File Geodatabase", "formato": "File Geodatabase (.gdb)",
          "descricao": "Um .gdb por serviço e lote (ex.: CC01.gdb), com as camadas do Anexo G.",
-         "prazo": "", "servicos": com_gdb, "fonte": {"documento": anexo_g, "paginas": ""}},
+         "prazo": "", "servicos": com_gdb, "nome_arquivo": "{sigla}{lote}.gdb", "secoes": [],
+         "como_fazer": "SIRGAS 2000 / UTM 23S; camadas, campos e domínios do Anexo G.",
+         "fonte": {"documento": anexo_g, "paginas": ""}},
         {"nome": "Tabela de atributos", "formato": "Excel (.xlsx)",
          "descricao": "Atributos dos circuitos.", "prazo": "", "servicos": com_gdb,
+         "nome_arquivo": "{sigla}{lote}_tabela_atributos.xlsx", "secoes": [], "como_fazer": "",
          "fonte": {"documento": anexo_g, "paginas": ""}},
         {"nome": "Programação trimestral", "formato": "Excel (.xlsx)",
          "descricao": "Programação dos serviços sob demanda por trimestre.", "prazo": "",
-         "servicos": sob, "fonte": {"documento": anexo_g, "paginas": ""}},
+         "servicos": sob, "nome_arquivo": "", "secoes": [], "como_fazer": "",
+         "fonte": {"documento": anexo_g, "paginas": ""}},
         {"nome": "Texto do plano", "formato": "Word (.docx)",
          "descricao": "Seções: " + "; ".join(s[0] for s in E.SECOES_DOCX) + ".",
-         "prazo": "", "servicos": list(E.SERVICOS),
+         "prazo": "", "servicos": list(E.SERVICOS), "nome_arquivo": "",
+         "secoes": [s[0] for s in E.SECOES_DOCX],
+         "como_fazer": f"Word, {E.FONTE_DOCX} {E.TAM_CORPO_PT} no corpo e {E.TAM_TITULO_PT} nos "
+                       "títulos (item 7.8).",
          "fonte": {"documento": edital, "paginas": ""}},
     ]
     p["insumos"] = [

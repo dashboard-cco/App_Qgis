@@ -2131,12 +2131,74 @@ def aplicar(p, caminho, proposta, saida=None):
             n_extra += 1
     ds.FlushCache()
     ds = None
+    # 6) polígonos dos circuitos mexidos cobrem as linhas e pontos que ficaram com eles
+    mexidos = set()
+    for op in proposta.get("operacoes") or []:
+        mexidos |= {r["codigo"] for r in op["recebem"]}
+        if op["tipo"] == "aliviar":
+            mexidos.add(op["circuito"])
+    for nv in proposta.get("desdobramentos") or []:
+        mexidos.add(nv["codigo"])
+        mexidos |= {o["circuito"] for o in nv["origens"] if not o["inteiro"]}
+    n_acertos = acertar_poligonos(saida, mapa, mexidos) if mexidos else 0
     if proposta.get("operacoes") or n_novos:
         avisos.append("Sem roteirização: revise a ordem de passagem e os pontos de início/fim "
                       "dos circuitos que receberam linhas e dos circuitos novos.")
     return {"saida": os.path.normpath(saida), "trocas": n_trocas, "horarios": n_horarios,
             "mudancas_turno": n_turno, "novos": n_novos, "horas_a_mais": n_extra,
+            "poligonos_acertados": n_acertos,
             "operacoes": len(proposta.get("operacoes") or []), "avisos": avisos}
+
+
+@estrutura.com_excecoes
+def acertar_poligonos(caminho, mapa, codigos, folga=3.0):
+    """Estende o polígono de cada circuito em 'codigos' para cobrir as suas linhas e pontos
+    (com 'folga' metros) e tira essa faixa do polígono vizinho, sem descobrir as linhas e os
+    pontos do vizinho. Devolve quantos polígonos mudaram."""
+    from shapely.ops import unary_union
+    circ, _, _ = ler_circuitos(caminho, mapa)
+    por = {c["codigo"]: c for c in circ}
+
+    def proprio(c):
+        gs = [x["geom"] for x in c["linhas"] + c["pontos"] if x["geom"] is not None]
+        return unary_union(gs).buffer(folga) if gs else None
+
+    mudou = {}
+    for cod in codigos:
+        c = por.get(cod)
+        if c is None or c["geom"] is None:
+            continue
+        g = c["geom"].buffer(0)
+        perto = g.buffer(0.5)
+        soltos = [x["geom"] for x in c["linhas"] + c["pontos"]
+                  if x["geom"] is not None and not perto.covers(x["geom"])]
+        if not soltos:
+            continue
+        add = unary_union(soltos).buffer(folga)
+        c["geom"] = unary_union([g, add])
+        mudou[cod] = c
+        for o in circ:
+            if o is c or o["geom"] is None or not o["geom"].intersects(add):
+                continue
+            pr = proprio(o)
+            corte = add.difference(pr) if pr is not None else add
+            if not corte.is_empty:
+                o["geom"] = o["geom"].buffer(0).difference(corte)
+                mudou[o["codigo"]] = o
+    if not mudou:
+        return 0
+    ds = estrutura.abrir(caminho, gravar=True)
+    lyr = ds.GetLayerByName(mapa["camada"])
+    tipo = lyr.GetGeomType()
+    for c in mudou.values():
+        if c["geom"] is None or c["geom"].is_empty:
+            continue
+        f = lyr.GetFeature(c["fid"])
+        f.SetGeometry(_para_ogr(c["geom"], tipo))
+        lyr.SetFeature(f)
+    ds.FlushCache()
+    ds = None
+    return len(mudou)
 
 
 def _gravar_novo(ds, lyr, mapa, nv, por_cod, campo_cod, bruto, gravar_campo, gravar_hora,
